@@ -16,7 +16,7 @@
     "name": "NovusTheory",
     "email": "novustheory@gmail.com"
   },
-  "license": "GPLV3",
+  "license": "GPL-3.0-only",
   "devDependencies": {
     "@electron-forge/cli": "^6.0.4",
     "@electron-forge/maker-deb": "^6.0.4",

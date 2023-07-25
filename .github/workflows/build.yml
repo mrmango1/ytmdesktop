@@ -1,0 +1,51 @@
+---
+name: Application Build
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [
+            { name: 'linux',   image: 'ubuntu-latest' },
+            { name: 'windows', image: 'windows-latest' },
+            { name: 'macos',   image: 'macos-latest' },
+          ]
+
+    runs-on: ${{ matrix.os.image }}
+
+    steps:
+      - name: Github checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Node (v18)
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - run: yarn --frozen-lockfile
+
+      - run: yarn make
+
+      # - uses: actions/upload-artifact@v2
+      #   with:
+      #     name: dist-merged
+      #     path: |
+      #       out/make/*.exe
+      #       out/make/*.deb
+      #       out/make/*.zip
+      #       out/make/*.dmg
+      #       out/make/*.rpm
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: dist-${{ matrix.os.name }}
+          path: |
+            out/make/*.exe
+            out/make/*.deb
+            out/make/*.zip
+            out/make/*.dmg
+            out/make/*.rpm

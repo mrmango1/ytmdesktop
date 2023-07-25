@@ -10,13 +10,36 @@ import { rendererConfig } from './webpack.renderer.config';
 
 const config: ForgeConfig = {
   packagerConfig: {
+    executableName: 'youtube-music-desktop-app',
     icon: './src/assets/icons/ytmd',
     extraResource: [
       './src/assets/icons'
-    ]
+    ],
+    appCategoryType: 'public.app-category.music',
+
   },
   rebuildConfig: {},
-  makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
+  makers: [
+    new MakerSquirrel({}),
+    new MakerZIP({}, ['darwin']),
+    new MakerRpm({
+      options: {
+        categories: [
+          'AudioVideo',
+          'Audio',
+        ],
+      },
+    }),
+    new MakerDeb({
+      options: {
+        categories: [
+          'AudioVideo',
+          'Audio',
+        ],
+        section: 'sound',
+      }
+    })
+  ],
   plugins: [
     new WebpackPlugin({
       mainConfig,
