@@ -34,18 +34,18 @@ jobs:
       #   with:
       #     name: dist-merged
       #     path: |
-      #       out/make/*.exe
-      #       out/make/*.deb
-      #       out/make/*.zip
-      #       out/make/*.dmg
-      #       out/make/*.rpm
+      #       out/make/squirrel.windows/x64/*.exe
+      #       out/make/deb/x64/*.deb
+      #       out/make/rpm/x64/*.rpm
+      #       out/make/**/*.zip
+      #       out/make/**/*.dmg
 
       - uses: actions/upload-artifact@v2
         with:
           name: dist-${{ matrix.os.name }}
           path: |
-            out/make/*.exe
-            out/make/*.deb
-            out/make/*.zip
-            out/make/*.dmg
-            out/make/*.rpm
+            out/make/squirrel.windows/x64/*.exe
+            out/make/deb/x64/*.deb
+            out/make/rpm/x64/*.rpm
+            out/make/**/*.zip
+            out/make/**/*.dmg
