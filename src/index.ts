@@ -412,6 +412,12 @@ const createOrShowSettingsWindow = (): void => {
     frame: false,
     parent: mainWindow,
     modal: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#000000',
+      symbolColor: '#BBBBBB',
+      height: 36
+    },
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -448,6 +454,12 @@ const createMainWindow = (): void => {
     height: 720,
     frame: false,
     icon: './assets/icons/ytmd.png',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#000000',
+      symbolColor: '#BBBBBB',
+      height: 36
+    },
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
