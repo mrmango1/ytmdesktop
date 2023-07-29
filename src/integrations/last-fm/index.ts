@@ -82,6 +82,12 @@ export default class LastFM implements IIntegration {
         return;
       }
       this.lastDetails = state.videoDetails;
+
+      if (!this.lastfmDetails || !this.lastfmDetails.sessionKey) {
+        this.getSession();
+        return;
+      }
+
       clearTimeout(this.scrobbleTimer);
 
       this.updateNowPlaying(state.videoDetails);
@@ -96,7 +102,7 @@ export default class LastFM implements IIntegration {
 
       this.scrobbleTimer = setTimeout(() => {
         this.scrobbleSong(state.videoDetails, scrobbleTime);
-      }, scrobbleTimeRequired);
+      }, scrobbleTimeRequired * 1000);
     }
   }
 
@@ -146,6 +152,7 @@ export default class LastFM implements IIntegration {
       // Check Errors against https://www.last.fm/api/show/track.scrobble#errors
       switch(error.code) {
         case 9: // Invalid session key
+          this.lastDetails.sessionKey = null;
           this.authenticateUser();
           break;
 

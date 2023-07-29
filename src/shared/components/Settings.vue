@@ -14,6 +14,7 @@ const appearance: StoreSchema["appearance"] = await store.get("appearance");
 const playback: StoreSchema["playback"] = await store.get("playback");
 const integrations: StoreSchema["integrations"] = await store.get("integrations");
 const shortcuts: StoreSchema["shortcuts"] = await store.get("shortcuts");
+const lastFM: StoreSchema["lastfm"] = await store.get("lastfm");
 
 const hideToTrayOnClose = ref<boolean>(general.hideToTrayOnClose);
 const showNotificationOnSongChange = ref<boolean>(general.showNotificationOnSongChange);
@@ -42,6 +43,8 @@ const shortcutThumbsUp = ref<string>(shortcuts.thumbsUp);
 const shortcutThumbsDown = ref<string>(shortcuts.thumbsDown);
 const shortcutVolumeUp = ref<string>(shortcuts.volumeUp);
 const shortcutVolumeDown = ref<string>(shortcuts.volumeDown);
+
+const lastFMSessionKey = ref<string>(lastFM.sessionKey);
 
 store.onDidAnyChange(async (newState, oldState) => {
   hideToTrayOnClose.value = newState.general.hideToTrayOnClose;
@@ -199,6 +202,15 @@ function restartApplication() {
         <div class="setting">
           <p>Last.fm scrobbling</p>
           <input v-model="lastFMEnabled" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+        <div v-if="lastFMEnabled" class="setting indented">
+          <div class="name-with-description">
+            <p class="name">
+              User is Authenticated:
+              <span v-if="lastFMSessionKey" style="color: #4caf50;">Yes</span>
+              <span v-else style="color: #ff1100;">No</span> 
+            </p>
+          </div>
         </div>
       </div>
 
