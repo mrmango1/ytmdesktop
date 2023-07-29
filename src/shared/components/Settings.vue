@@ -33,6 +33,7 @@ const companionServerAuthWindowEnabled = ref<boolean>(
   (await safeStorage.decryptString(integrations.companionServerAuthWindowEnabled)) === "true" ? true : false
 );
 const discordPresenceEnabled = ref<boolean>(integrations.discordPresenceEnabled);
+const lastFMEnabled = ref<boolean>(integrations.lastFMEnabled);
 
 const shortcutPlayPause = ref<string>(shortcuts.playPause);
 const shortcutNext = ref<string>(shortcuts.next);
@@ -59,6 +60,7 @@ store.onDidAnyChange(async (newState, oldState) => {
   companionServerEnabled.value = newState.integrations.companionServerEnabled;
   companionServerAuthWindowEnabled.value = (await safeStorage.decryptString(newState.integrations.companionServerAuthWindowEnabled)) === "true" ? true : false;
   discordPresenceEnabled.value = newState.integrations.discordPresenceEnabled;
+  lastFMEnabled.value = newState.integrations.lastFMEnabled;
 
   shortcutPlayPause.value = newState.shortcuts.playPause;
   shortcutNext.value = newState.shortcuts.next;
@@ -86,6 +88,7 @@ async function settingsChanged() {
   store.set("integrations.companionServerEnabled", companionServerEnabled.value);
   store.set("integrations.companionServerAuthWindowEnabled", await safeStorage.encryptString(companionServerAuthWindowEnabled.value.toString()));
   store.set("integrations.discordPresenceEnabled", discordPresenceEnabled.value);
+  store.set("integrations.lastFMEnabled", lastFMEnabled.value);
 
   store.set("shortcuts.playPause", shortcutPlayPause.value);
   store.set("shortcuts.next", shortcutNext.value);
@@ -192,6 +195,10 @@ function restartApplication() {
         <div class="setting">
           <p>Discord rich presence</p>
           <input v-model="discordPresenceEnabled" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+        <div class="setting">
+          <p>Last.fm scrobbling</p>
+          <input v-model="lastFMEnabled" class="toggle" type="checkbox" @change="settingsChanged" />
         </div>
       </div>
 
