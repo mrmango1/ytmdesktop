@@ -209,6 +209,7 @@ export default class LastFM implements IIntegration {
   private createBody(params: any) {
     const data = new URLSearchParams();
     for (const key in params) {
+      if (params[key] === null || params[key] === undefined) { continue; }
       data.append(key, params[key]);
     }
     return data;
