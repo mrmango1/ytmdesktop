@@ -24,6 +24,8 @@ jobs:
       - name: Setup Node (v18)
         uses: actions/setup-node@v3
         with:
+          # https://github.com/actions/setup-node/blob/main/docs/advanced-usage.md#caching-packages-data
+          cache: 'yarn'
           node-version: 18
 
       - run: yarn --frozen-lockfile
