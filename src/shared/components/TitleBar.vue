@@ -25,39 +25,17 @@ window.ytmd.handleWindowEvents((event, state) => {
 </script>
 
 <template>
-    <div class="titlebar">
-        <div class="left">
-            <div v-if="title" class="title">
-                <span v-if="icon" class="icon material-symbols-outlined">{{ icon }}</span>
-                {{ title }}
-            </div>
-        </div>
-        <div class="right">
-            <div class="app-buttons">
-                <button v-if="hasSettingsButton" class="app-button" @click="openSettingsWindow" tabindex="1">
-                    <span class="material-symbols-outlined">settings</span>
-                </button>
-            </div>
-        </div>
+  <div class="titlebar">
+    <div class="left">
+      <div v-if="title" class="title">
+        <span v-if="icon" class="icon material-symbols-outlined">{{ icon }}</span>
+        {{ title }}
+      </div>
     </div>
     <div class="right">
       <div class="app-buttons">
-        <button v-if="hasSettingsButton" class="app-button" tabindex="1" @click="openSettingsWindow">
+        <button v-if="hasSettingsButton" class="app-button" @click="openSettingsWindow" tabindex="1">
           <span class="material-symbols-outlined">settings</span>
-        </button>
-      </div>
-      <div class="windows-action-buttons">
-        <button v-if="hasMinimizeButton" class="action-button window-minimize" tabindex="2" @click="minimizeWindow">
-          <span class="material-symbols-outlined">remove</span>
-        </button>
-        <button v-if="hasMaximizeButton && !windowMaximized" class="action-button window-maximize" tabindex="3" @click="maximizeWindow">
-          <span class="material-symbols-outlined">square</span>
-        </button>
-        <button v-if="hasMinimizeButton && windowMaximized" class="action-button window-restore" tabindex="4" @click="restoreWindow">
-          <span class="material-symbols-outlined">filter_none</span>
-        </button>
-        <button class="action-button window-close" tabindex="5" @click="closeWindow">
-          <span class="material-symbols-outlined">close</span>
         </button>
       </div>
     </div>
@@ -85,11 +63,11 @@ window.ytmd.handleWindowEvents((event, state) => {
 }
 
 .titlebar .left {
-    margin-left: 4px;
+  margin-left: 4px;
 }
 
 .titlebar .right {
-    margin-right: 4px;
+  margin-right: 4px;
 }
 
 .title {
@@ -160,21 +138,4 @@ window.ytmd.handleWindowEvents((event, state) => {
 .action-button > .material-symbols-outlined {
   font-size: 24px;
 }
-<<<<<<< HEAD
 </style>
-=======
-
-.windows-action-buttons {
-  display: flex;
-  margin-left: 8px;
-}
-
-.window-restore > .material-symbols-outlined {
-  transform: rotate(180deg);
-}
-
-.window-close:hover {
-  background-color: #e81123;
-}
-</style>
->>>>>>> v2
