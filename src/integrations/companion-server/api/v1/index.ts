@@ -2,42 +2,17 @@ import { BrowserView, BrowserWindow, ipcMain, safeStorage } from "electron";
 import ElectronStore from "electron-store";
 import { FastifyPluginCallback, FastifyPluginOptions } from "fastify";
 import { StoreSchema } from "../../../../shared/store/schema";
-import playerStateStore from "../../../../player-state-store";
+import playerStateStore, { PlayerState, RepeatMode } from "../../../../player-state-store";
 import { createAuthToken, getIsTemporaryAuthCodeValidAndRemove, getTemporaryAuthCode, isAuthValid, isAuthValidMiddleware } from "../../shared/auth";
-import fastifyRateLimit from '@fastify/rate-limit';
-import crypto from 'crypto';
+import fastifyRateLimit from "@fastify/rate-limit";
+import crypto from "crypto";
+import createError from "@fastify/error";
+import { APIV1CommandRequestBody, APIV1CommandRequestBodyType, APIV1RequestCodeBody, APIV1RequestCodeBodyType, APIV1RequestTokenBody, APIV1RequestTokenBodyType } from "../../shared/schemas";
 
 declare const AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY: string;
 declare const AUTHORIZE_COMPANION_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
-const mapThumbnails = (thumbnail: any) => {
-  // Explicit mapping to keep a consistent API
-  // If YouTube Music changes how this is presented internally then it's easier to update without breaking the API
-  return {
-    url: thumbnail.url,
-    width: thumbnail.width,
-    height: thumbnail.height
-  };
-};
-
-const mapQueueItems = (item: any) => {
-  let playlistPanelVideoRenderer;
-  if (item.playlistPanelVideoRenderer) playlistPanelVideoRenderer = item.playlistPanelVideoRenderer;
-  else if (item.playlistPanelVideoWrapperRenderer)
-    playlistPanelVideoRenderer = item.playlistPanelVideoWrapperRenderer.primaryRenderer.playlistPanelVideoRenderer;
-
-  // This probably shouldn't happen but in the off chance it does we need to return nothing
-  if (!playlistPanelVideoRenderer) return null;
-
-  return {
-    thubmnails: playlistPanelVideoRenderer.thumbnail.thumbnails.map(mapThumbnails),
-    title: playlistPanelVideoRenderer.title.runs[0].text,
-    author: playlistPanelVideoRenderer.shortBylineText.runs[0].text,
-    duration: playlistPanelVideoRenderer.lengthText.runs[0].text
-  };
-};
-
-const transformPlayerState = (state: any) => {
+const transformPlayerState = (state: PlayerState) => {
   return {
     player: {
       trackState: state.trackState,
@@ -45,15 +20,11 @@ const transformPlayerState = (state: any) => {
       queue: state.queue
         ? {
             autoplay: state.queue.autoplay,
-            shuffleEnabled: state.queue.shuffleEnabled,
-            items: state.queue.items.map(mapQueueItems),
-            automixItems: state.queue.automixItems.map(mapQueueItems),
+            items: state.queue.items,
+            automixItems: state.queue.automixItems,
             isGenerating: state.queue.isGenerating,
             isInfinite: state.queue.isInfinite,
             repeatMode: state.queue.repeatMode,
-            // Developer note:
-            //  selectedItemIndex can be 0 when the current video is not 0 in the queue.
-            //  YouTube Music usually only does this on first navigations if going directly to a video + playlist (possibly within new queues as well on a playlist)
             selectedItemIndex: state.queue.selectedItemIndex
           }
         : null
@@ -61,29 +32,48 @@ const transformPlayerState = (state: any) => {
     video: state.videoDetails
       ? {
           author: state.videoDetails.author,
+          channelId: state.videoDetails.channelId,
           title: state.videoDetails.title,
           album: state.videoDetails.album,
-          thumbnails: state.videoDetails.thumbnail.thumbnails.map(mapThumbnails),
-          duration: parseInt(state.videoDetails.lengthSeconds),
-          id: state.videoDetails.videoId
+          thumbnails: state.videoDetails.thumbnails,
+          durationSeconds: state.videoDetails.durationSeconds,
+          id: state.videoDetails.id
         }
-      : null
+      : null,
+    // API Users:
+    // WARNING! WARNING! WARNING! WARNING!
+    // playlistId may not be what you expect it to be.
+    // - If the song playing comes from a randomly generated radio queue then this will be the id of that random queue (YTM does not persist these, pretend these IDs don't exist on the YTM backend)
+    // - If you add an album/playlist to queue once those songs start playing then playlistId will be the id of that album/playlist
+    // - Play Next for individual songs have a null playlistId when reached in a queue. Does not apply for Play Next to an entire album/playlist.
+    // In summary, this property doesn't reliably tell you this video belongs to the specified playlistId. Do not treat it as such. Use it as a state if something may be playing from a known playlistId
+    playlistId: state.playlistId
   };
 };
 
 interface CompanionServerAPIv1Options extends FastifyPluginOptions {
-  //remoteCommandEmitter: (command: string, ...args: any[]) => void;
   getStore: () => ElectronStore<StoreSchema>;
   getYtmView: () => BrowserView;
 }
 
-type RemoteCommand = "playPause" | "play" | "pause" | "volumeUp" | "volumeDown" | "mute" | "unmute" | "next" | "previous";
+//const InvalidCommandError = createError("INVALID_COMMAND", "Command '%s' is invalid", 400);
+const InvalidVolumeError = createError("INVALID_VOLUME", "Volume '%s' is invalid", 400);
+const InvalidRepeatModeError = createError("INVALID_REPEAT_MODE", "Repeat mode '%s' cannot be set", 400);
+
+//type RemoteCommand = "playPause" | "play" | "pause" | "volumeUp" | "volumeDown" | "setVolume" | "mute" | "unmute" | "next" | "previous" | "repeatMode";
+
+type Playlist = {
+  id: string;
+  title: string;
+};
+
+const authorizationWindows: BrowserWindow[] = [];
 
 const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> = async (fastify, options, next) => {
-  const sendCommand = (command: RemoteCommand) => {
+  const sendCommand = (commandRequest: APIV1CommandRequestBodyType) => {
     const ytmView = options.getYtmView();
     if (ytmView) {
-      switch (command) {
+      switch (commandRequest.command) {
         case "playPause": {
           ytmView.webContents.send("remoteControl:execute", "playPause");
           break;
@@ -109,6 +99,17 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
           break;
         }
 
+        case "setVolume": {
+          const volume = commandRequest.data;
+          // Check if Volume is a number and between 0 and 100
+          if (isNaN(volume) || volume < 0 || volume > 100) {
+            throw new InvalidVolumeError(volume);
+          }
+
+          ytmView.webContents.send("remoteControl:execute", "setVolume", volume);
+          break;
+        }
+
         case "mute": {
           ytmView.webContents.send("remoteControl:execute", "mute");
           break;
@@ -128,9 +129,31 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
           ytmView.webContents.send("remoteControl:execute", "previous");
           break;
         }
+
+        case "repeatMode": {
+          const repeatMode = commandRequest.data;
+          switch (repeatMode) {
+            case RepeatMode.None: {
+              ytmView.webContents.send("remoteControl:execute", "repeatMode", "NONE");
+              break;
+            }
+            case RepeatMode.All: {
+              ytmView.webContents.send("remoteControl:execute", "repeatMode", "ALL");
+              break;
+            }
+            case RepeatMode.One: {
+              ytmView.webContents.send("remoteControl:execute", "repeatMode", "ONE");
+              break;
+            }
+            default: {
+              throw new InvalidRepeatModeError(repeatMode);
+            }
+          }
+          break;
+        }
       }
     }
-  }
+  };
 
   await fastify.register(fastifyRateLimit, {
     global: true,
@@ -138,139 +161,183 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
     timeWindow: 1000 * 60
   });
 
-  fastify.post<{ Body: { appName: string } }>("/auth/requestcode", {
-    config: {
-      rateLimit: {
-        max: 5,
-        timeWindow: 1000 * 60
+  fastify.post<{ Body: APIV1RequestCodeBodyType }>(
+    "/auth/requestcode",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: 1000 * 60
+        }
+      },
+      schema: {
+        body: APIV1RequestCodeBody
+      }
+    },
+    async (request, response) => {
+      const code = await getTemporaryAuthCode(request.body.appId, request.body.appVersion, request.body.appName);
+      if (code) {
+        response.send({
+          code
+        });
+      } else {
+        response.code(504).send({
+          error: "AUTHORIZATION_TIMEOUT"
+        });
       }
     }
-  }, async (request, response) => {
-    const code = await getTemporaryAuthCode(request.body.appName);
-    if (code) {
-      response.send({
-        code
-      });
-    } else {
-      response.code(504).send({
-        error: "AUTHORIZATION_TIMEOUT"
-      });
-    }
-  });
+  );
 
-  fastify.post<{ Body: { appName: string; code: string } }>("/auth/request", {
-    config: {
-      rateLimit: {
-        max: 5,
-        timeWindow: 1000 * 60
+  fastify.post<{ Body: APIV1RequestTokenBodyType }>(
+    "/auth/request",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: 1000 * 60
+        }
+      },
+      schema: {
+        body: APIV1RequestTokenBody
       }
-    }
-  }, async (request, response) => {
-    let companionServerAuthWindowEnabled = false;
-    try {
-      companionServerAuthWindowEnabled =
-        safeStorage.decryptString(Buffer.from(options.getStore().get("integrations").companionServerAuthWindowEnabled, "hex")) === "true" ? true : false;
-    } catch {
-      /* do nothing, value is false */
-    }
-
-    if (!companionServerAuthWindowEnabled) {
-      response.code(403).send({
-        error: "AUTHORIZATION_DISABLED"
-      });
-      return;
-    }
-
-    if (!getIsTemporaryAuthCodeValidAndRemove(request.body.appName, request.body.code)) {
-      response.code(400).send({
-        error: "AUTHORIZATION_INVALID"
-      });
-      return;
-    }
-
-    ipcMain.handle("companionAuthorization:getAppName", () => {
-      return request.body.appName;
-    });
-
-    ipcMain.handle("companionAuthorization:getCode", () => {
-      return request.body.code;
-    });
-
-    // Create the authorization browser window.
-    const authorizationWindow = new BrowserWindow({
-      width: 640,
-      height: 480,
-      minimizable: false,
-      maximizable: false,
-      resizable: false,
-      frame: false,
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        preload: AUTHORIZE_COMPANION_WINDOW_PRELOAD_WEBPACK_ENTRY
+    },
+    async (request, response) => {
+      let companionServerAuthWindowEnabled = false;
+      try {
+        companionServerAuthWindowEnabled =
+          safeStorage.decryptString(Buffer.from(options.getStore().get("integrations").companionServerAuthWindowEnabled, "hex")) === "true" ? true : false;
+      } catch {
+        /* do nothing, value is false */
       }
-    });
-    authorizationWindow.loadURL(AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY);
-    authorizationWindow.show();
 
-    // Open the DevTools.
-    if (process.env.NODE_ENV === "development") {
-      authorizationWindow.webContents.openDevTools({
-        mode: "detach"
+      // There's too many authorization windows open and we have to reject this request for now (this is unlikely to occur but this prevents malicious use of spamming auth windows)
+      // API Users: Show a friendly feedback that too many applications are trying to authorize at the same time
+      if (authorizationWindows.length >= 5) {
+        response.code(503).send({
+          error: "AUTHORIZATION_TOO_MANY"
+        });
+        return;
+      }
+
+      // API Users: The user has companion server authorization disabled, show a feedback error accordingly
+      if (!companionServerAuthWindowEnabled) {
+        response.code(403).send({
+          error: "AUTHORIZATION_DISABLED"
+        });
+        return;
+      }
+
+      // API Users: Make sure you /requestcode above
+      const authData = getIsTemporaryAuthCodeValidAndRemove(request.body.appId, request.body.code)
+      if (!authData) {
+        response.code(400).send({
+          error: "AUTHORIZATION_INVALID"
+        });
+        return;
+      }
+
+      const requestId = crypto.randomUUID();
+
+      ipcMain.handle(`companionAuthorization:getAppName:${requestId}`, () => {
+        return authData.appName;
       });
-    }
 
-    let promiseResolve: (value: boolean | PromiseLike<boolean>) => void;
-    let promiseInterval: string | number | NodeJS.Timeout;
+      ipcMain.handle(`companionAuthorization:getCode:${requestId}`, () => {
+        return request.body.code;
+      });
 
-    function resultListener(_event: Electron.IpcMainEvent, authorized: boolean) {
-      clearInterval(promiseInterval);
-      promiseResolve(authorized);
-    }
+      // Create the authorization browser window.
+      const authorizationWindow = new BrowserWindow({
+        width: 640,
+        height: 480,
+        minimizable: false,
+        maximizable: false,
+        resizable: false,
+        frame: false,
+        titleBarStyle: "hidden",
+        titleBarOverlay: {
+          color: "#000000",
+          symbolColor: "#BBBBBB",
+          height: 36
+        },
+        webPreferences: {
+          sandbox: true,
+          contextIsolation: true,
+          preload: AUTHORIZE_COMPANION_WINDOW_PRELOAD_WEBPACK_ENTRY,
+          additionalArguments: [requestId]
+        }
+      });
+      authorizationWindow.loadURL(AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY);
+      authorizationWindow.show();
 
-    function closeListener() {
-      clearInterval(promiseInterval);
-      promiseResolve(false);
-    }
+      authorizationWindows.push(authorizationWindow);
 
-    const startTime = Date.now();
-    const authorized = await new Promise<boolean>(resolve => {
-      promiseResolve = resolve;
-      promiseInterval = setInterval(() => {
-        if (request.connection.destroyed) {
-          clearInterval(promiseInterval);
-          resolve(false);
+      try {
+        // Open the DevTools.
+        if (process.env.NODE_ENV === "development") {
+          authorizationWindow.webContents.openDevTools({
+            mode: "detach"
+          });
         }
 
-        if (Date.now() - startTime > 30 * 1000) {
+        let promiseResolve: (value: boolean | PromiseLike<boolean>) => void;
+        let promiseInterval: string | number | NodeJS.Timeout;
+
+        const resultListener = (_event: Electron.IpcMainEvent, authorized: boolean) => {
           clearInterval(promiseInterval);
-          resolve(false);
+          promiseResolve(authorized);
+        };
+
+        const closeListener = () => {
+          clearInterval(promiseInterval);
+          promiseResolve(false);
+        };
+
+        const startTime = Date.now();
+        const authorized = await new Promise<boolean>(resolve => {
+          promiseResolve = resolve;
+          promiseInterval = setInterval(() => {
+            if (request.connection.destroyed) {
+              clearInterval(promiseInterval);
+              resolve(false);
+            }
+
+            if (Date.now() - startTime > 30 * 1000) {
+              clearInterval(promiseInterval);
+              resolve(false);
+            }
+          }, 250);
+
+          ipcMain.once(`companionAuthorization:result:${requestId}`, resultListener);
+          ipcMain.once(`companionWindow:close:${requestId}`, closeListener);
+        });
+
+        authorizationWindow.close();
+        ipcMain.removeHandler(`companionAuthorization:getAppName:${requestId}`);
+        ipcMain.removeHandler(`companionAuthorization:getCode:${requestId}`);
+        ipcMain.removeListener(`companionAuthorization:result:${requestId}`, resultListener);
+        ipcMain.removeListener(`companionWindow:close:${requestId}`, closeListener);
+
+        if (authorized) {
+          const token = createAuthToken(options.getStore(), authData.appId, authData.appVersion, authData.appName);
+
+          response.send({
+            token
+          });
+          options.getStore().set("integrations.companionServerAuthWindowEnabled", await safeStorage.encryptString("false"));
+        } else {
+          response.code(403).send({
+            error: "AUTHORIZATION_DENIED"
+          });
         }
-      }, 250);
-
-      ipcMain.once("companionAuthorization:result", resultListener);
-      ipcMain.once("companionWindow:close", closeListener);
-    });
-
-    authorizationWindow.close();
-    ipcMain.removeHandler("companionAuthorization:getAppName");
-    ipcMain.removeHandler("companionAuthorization:getCode");
-    ipcMain.removeListener("companionAuthorization:result", resultListener);
-    ipcMain.removeListener("companionWindow:close", closeListener);
-
-    if (authorized) {
-      const token = createAuthToken(options.getStore(), request.body.appName);
-
-      response.send({
-        token
-      });
-      options.getStore().set("integrations.companionServerAuthWindowEnabled", await safeStorage.encryptString("false"));
-    } else {
-      response.code(403).send({
-        error: "AUTHORIZATION_DENIED"
-      });
+      } finally {
+        const index = authorizationWindows.indexOf(authorizationWindow);
+        if (index > -1) {
+          authorizationWindows.splice(index, 1);
+        }
+      }
     }
-  });
+  );
 
   fastify.get(
     "/playlists",
@@ -279,10 +346,10 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
         // This endpoint sends a real API request to YTM which allows to fetch playlists.
         // API users: Please cache playlists, they are unlikely to change often. A websocket event will be emitted if a playlist is created or deleted
         rateLimit: {
-          hook: 'preHandler',
+          hook: "preHandler",
           max: 1,
           timeWindow: 1000 * 30,
-          keyGenerator: (request) => {
+          keyGenerator: request => {
             return request.authId || request.ip;
           }
         }
@@ -296,15 +363,15 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       if (ytmView) {
         const requestId = crypto.randomUUID();
 
-        const playlistsResponseListener = (_event: Electron.IpcMainEvent, playlists: any) => {
+        const playlistsResponseListener = (_event: Electron.IpcMainEvent, playlists: Playlist[]) => {
           response.send(playlists);
-        }
+        };
         ipcMain.once(`ytmView:getPlaylists:response:${requestId}`, playlistsResponseListener);
 
         setTimeout(() => {
           ipcMain.removeListener(`ytmView:getPlaylists:response:${requestId}`, playlistsResponseListener);
           response.code(504).send({
-            error: 'YTM_RESULT_TIMEOUT'
+            error: "YTM_RESULT_TIMEOUT"
           });
         }, 1000 * 5);
 
@@ -312,7 +379,7 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
         //response.send(transformPlayerState(playerStateStore.getState()));
       } else {
         response.code(503).send({
-          error: 'YTM_UNAVAILABLE'
+          error: "YTM_UNAVAILABLE"
         });
       }
     }
@@ -324,10 +391,10 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       config: {
         // API users: Please utilize the realtime websocket to get the state. Request this endpoint as necessary, such as initial state fetching.
         rateLimit: {
-          hook: 'preHandler',
+          hook: "preHandler",
           max: 1,
           timeWindow: 1000 * 5,
-          keyGenerator: (request) => {
+          keyGenerator: request => {
             return request.authId || request.ip;
           }
         }
@@ -341,26 +408,28 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
     }
   );
 
-  fastify.post<{ Body: { command: RemoteCommand } }>(
+  fastify.post<{ Body: APIV1CommandRequestBodyType }>(
     "/command",
     {
       config: {
-        // API users: You may also use the websocket to perform remote command options
         rateLimit: {
-          hook: 'preHandler',
+          hook: "preHandler",
           max: 2,
           timeWindow: 1000 * 1,
-          keyGenerator: (request) => {
+          keyGenerator: request => {
             return request.authId || request.ip;
           }
         }
+      },
+      schema: {
+        body: APIV1CommandRequestBody
       },
       preHandler: (request, response, next) => {
         return isAuthValidMiddleware(options.getStore(), request, response, next);
       }
     },
     (request, response) => {
-      sendCommand(request.body.command);
+      sendCommand(request.body);
       response.code(204).send();
     }
   );
@@ -379,29 +448,27 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       });
     });*/
 
-    const stateStoreListener = (state: any) => {
+    const stateStoreListener = (state: PlayerState) => {
       fastify.io.of("/api/v1/realtime").emit("state-update", transformPlayerState(state));
     };
     playerStateStore.addEventListener(stateStoreListener);
 
-    const createPlaylistObservedListener = (_event: Electron.IpcMainEvent, playlist: any) => {
-      console.log("Create playlist observed", playlist);
+    const createPlaylistObservedListener = (_event: Electron.IpcMainEvent, playlist: Playlist) => {
       fastify.io.of("/api/v1/realtime").emit("playlist-created", playlist);
     };
-    ipcMain.on('ytmView:createPlaylistObserved', createPlaylistObservedListener);
-    
+    ipcMain.on("ytmView:createPlaylistObserved", createPlaylistObservedListener);
+
     const deletePlaylistObservedListener = (_event: Electron.IpcMainEvent, playlistId: string) => {
-      console.log("Delete playlist observed", playlistId);
       fastify.io.of("/api/v1/realtime").emit("playlist-deleted", playlistId);
     };
-    ipcMain.on('ytmView:deletePlaylistObserved', deletePlaylistObservedListener);
+    ipcMain.on("ytmView:deletePlaylistObserved", deletePlaylistObservedListener);
 
-    fastify.addHook('onClose', () => {
+    fastify.addHook("onClose", () => {
       // This should normally close on its own but we'll make sure it's closed out
       fastify.io.close();
       playerStateStore.removeEventListener(stateStoreListener);
-      ipcMain.off('ytmView:createPlaylistObserved', createPlaylistObservedListener);
-      ipcMain.off('ytmView:deletePlaylistObserved', deletePlaylistObservedListener);
+      ipcMain.off("ytmView:createPlaylistObserved", createPlaylistObservedListener);
+      ipcMain.off("ytmView:deletePlaylistObserved", deletePlaylistObservedListener);
     });
   });
 

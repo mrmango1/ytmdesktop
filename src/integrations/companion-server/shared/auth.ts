@@ -4,7 +4,15 @@ import ElectronStore from "electron-store";
 import { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import { StoreSchema } from "../../../shared/store/schema";
 
-const temporaryCodeMap: { [code: string]: any } = {};
+const temporaryCodeMap: { [code: string]: { appId: string, appVersion: string, appName: string } } = {};
+
+type AuthToken = {
+  appId: string,
+  appVersion: string,
+  appName: string,
+  id: string,
+  token: string
+}
 
 async function getUnusedCode() {
   return new Promise<string>(resolve => {
@@ -27,10 +35,12 @@ async function getUnusedCode() {
   });
 }
 
-export async function getTemporaryAuthCode(appName: string) {
+export async function getTemporaryAuthCode(appId: string, appVersion: string, appName: string) {
   const code = await getUnusedCode();
   if (code) {
     temporaryCodeMap[code] = {
+      appId,
+      appVersion,
       appName
     };
     setTimeout(() => {
@@ -40,29 +50,37 @@ export async function getTemporaryAuthCode(appName: string) {
   return code;
 }
 
-export function getIsTemporaryAuthCodeValidAndRemove(appName: string, code: string) {
+export function getIsTemporaryAuthCodeValidAndRemove(appId: string, code: string) {
   if (temporaryCodeMap[code]) {
-    if (temporaryCodeMap[code].appName === appName) {
+    if (temporaryCodeMap[code].appId === appId) {
+      const data = temporaryCodeMap[code];
       delete temporaryCodeMap[code];
-      return true;
+      return data;
     }
   }
 
   return false;
 }
 
-export function createAuthToken(store: ElectronStore<StoreSchema>, appName: string) {
-  let authTokens: object[] = [];
+export function createAuthToken(store: ElectronStore<StoreSchema>, appId: string, appVersion: string, appName: string) {
+  let authTokens: AuthToken[] = [];
   try {
     authTokens = JSON.parse(safeStorage.decryptString(Buffer.from(store.get("integrations").companionServerAuthTokens, "hex")));
   } catch {
     /* authTokens will just be an empty array */
   }
 
+  const currentTokenIndex = authTokens.findIndex(token => token.appId === appId);
+  if (currentTokenIndex > -1) {
+    authTokens.splice(currentTokenIndex, 1);
+  }
+
   const token = crypto.randomBytes(256).toString("hex");
   const tokenId = crypto.randomUUID();
   authTokens.push({
-    appName: appName,
+    appId,
+    appName,
+    appVersion,
     id: tokenId,
     token: crypto.createHash("sha256").update(token).digest("hex")
   });
@@ -77,7 +95,7 @@ export function isAuthValid(store: ElectronStore<StoreSchema>, authToken: string
 
   const authTokenHash = crypto.createHash("sha256").update(authToken).digest("hex");
 
-  let authTokens: any[] = [];
+  let authTokens: AuthToken[] = [];
   try {
     const decryptedAuthTokens = safeStorage.decryptString(Buffer.from(store.get("integrations").companionServerAuthTokens, "hex"));
     authTokens = JSON.parse(decryptedAuthTokens);

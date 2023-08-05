@@ -22,15 +22,22 @@ const closeWindow = window.ytmd.closeWindow;
 
 const openSettingsWindow = window.ytmd.openSettingsWindow;
 
+const wcoVisible = ref(window.navigator.windowControlsOverlay.visible);
 const windowMaximized = ref(false);
+const windowFullscreen = ref(false);
 
 window.ytmd.handleWindowEvents((event, state) => {
   windowMaximized.value = state.maximized;
+  windowFullscreen.value = state.fullscreen;
+});
+
+window.navigator.windowControlsOverlay.addEventListener("geometrychange", event => {
+  wcoVisible.value = event.visible;
 });
 </script>
 
 <template>
-  <div class="titlebar">
+  <div v-if="!windowFullscreen" class="titlebar">
     <div class="left">
       <div v-if="title" class="title">
         <span v-if="icon" class="icon material-symbols-outlined">{{ icon }}</span>
@@ -43,7 +50,7 @@ window.ytmd.handleWindowEvents((event, state) => {
           <span class="material-symbols-outlined">settings</span>
         </button>
       </div>
-      <div class="windows-action-buttons">
+      <div v-if="!wcoVisible" class="windows-action-buttons">
         <button v-if="hasMinimizeButton" class="action-button window-minimize" tabindex="2" @click="minimizeWindow">
           <span class="material-symbols-outlined">remove</span>
         </button>
@@ -63,7 +70,8 @@ window.ytmd.handleWindowEvents((event, state) => {
 
 <style scoped>
 .titlebar {
-  width: 100%;
+  left: env(titlebar-area-x, 0);
+  width: env(titlebar-area-width, 100%);
   height: 36px;
   user-select: none;
   -webkit-app-region: drag;
@@ -71,6 +79,7 @@ window.ytmd.handleWindowEvents((event, state) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  position: relative;
 }
 
 .titlebar .left,
@@ -78,6 +87,14 @@ window.ytmd.handleWindowEvents((event, state) => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.titlebar .left {
+  margin-left: 4px;
+}
+
+.titlebar .right .app-buttons {
+  margin-right: 4px;
 }
 
 .title {
@@ -96,10 +113,6 @@ window.ytmd.handleWindowEvents((event, state) => {
     "GRAD" 0,
     "opsz" 24;
 }
-
-/*button:focus {
-    outline: none;
-}*/
 
 .app-button {
   width: 28px;
