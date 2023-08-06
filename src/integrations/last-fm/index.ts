@@ -16,6 +16,7 @@ export default class LastFM implements IIntegration {
   private lastDetails: VideoDetails = null;
   private lastfmDetails: StoreSchema["lastfm"] = null;
   private scrobbleTimer: NodeJS.Timer|null = null;
+  private playerStateFunction: (state: PlayerState) => void;
 
   private async createToken(): Promise<string> {
     const data: LastfmRequestBody = {
@@ -179,7 +180,8 @@ export default class LastFM implements IIntegration {
       this.getSession();
     }
 
-    playerStateStore.addEventListener((state: PlayerState) => this.updatePlayerState(state));
+    this.playerStateFunction = (state: PlayerState) => this.updatePlayerState(state);
+    playerStateStore.addEventListener(this.playerStateFunction);
   }
 
   public disable(): void {
@@ -187,7 +189,7 @@ export default class LastFM implements IIntegration {
       return;
     }
 
-    playerStateStore.removeEventListener((state: PlayerState) => this.updatePlayerState(state));
+    playerStateStore.removeEventListener(this.playerStateFunction);
     this.isEnabled = false;
   }
 
