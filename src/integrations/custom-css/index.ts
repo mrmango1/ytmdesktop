@@ -1,17 +1,20 @@
-import { BrowserView } from "electron";
+import { BrowserView, ipcMain, ipcRenderer } from "electron";
 import fs from "fs";
 import ElectronStore from "electron-store";
 
 import IIntegration from "../integration";
 import { StoreSchema } from "../../shared/store/schema";
+import { Unsubscribe } from "conf/dist/source/types";
 
 export default class CustomCSS implements IIntegration {
   private ytmView: BrowserView;
   private store: ElectronStore<StoreSchema>;
   private isEnabled = false;
 
+  private ytmViewLoaded = false;
   private customCSSKey: string|null = null;
   private fileListener: fs.StatsListener|null = null;
+  private storeListener: Unsubscribe|null = null;
 
   public provide(store: ElectronStore<StoreSchema>, ytmView: BrowserView): void {
     this.ytmView = ytmView;
@@ -26,33 +29,16 @@ export default class CustomCSS implements IIntegration {
     this.isEnabled = true;
     if (this.ytmView === null || this.customCSSKey) return;
 
-    const cssPath: string|null = this.store.get('appearance.customCSSPath');
+    this.injectCSS();
 
-    if (cssPath && fs.existsSync(cssPath)) {
-      this.injectCSS(
-        fs.readFileSync(cssPath, "utf8")
-      );
-    }
-    else {
-      console.error("Custom CSS file not found");
-    }
-
-    // Do not listen for changes to the custom CSS file if the user has
-    // chosen to use the user's origin for the CSS
-    // https://github.com/electron/electron/issues/27792
     // Listen to updates to the custom CSS file
-    this.store.onDidChange('appearance', (oldState, newState) => {
+    this.storeListener = this.store.onDidChange('appearance', (oldState, newState) => {
       if (newState.customCSSEnabled && oldState.customCSSPath != newState.customCSSPath) {
-        this.removeCSS();
-        this.injectCSS(
-          fs.readFileSync(newState.customCSSPath, "utf8")
-        );
+        this.updateCSS();
 
         this.watchCSSFile(newState.customCSSPath, oldState.customCSSPath);
       }
     });
-    
-    this.watchCSSFile(cssPath);
   }
 
   public disable(): void {
@@ -63,26 +49,51 @@ export default class CustomCSS implements IIntegration {
       fs.unwatchFile(this.store.get('appearance.customCSSPath'), this.fileListener);
       this.fileListener = null;
     }
+
+    if (this.storeListener) {
+      this.storeListener();
+      this.storeListener = null;
+    }
   }
 
   public updateCSS(): void {
     if (this.isEnabled) {
       this.removeCSS();
-      this.enable();
+      this.injectCSS();
     }
   }
 
   // --------------------------------------------------
 
-  private async injectCSS(content: string) {
-    this.ytmView.webContents.on('did-finish-load', async () => {
-      if (this.customCSSKey) { return; }
+  private injectCSS() {
+    if (!this.ytmView) { return; }
 
-      this.customCSSKey = await this.ytmView.webContents.insertCSS(content);
-    });
+    const cssPath: string|null = this.store.get('appearance.customCSSPath');
+    if (cssPath && fs.existsSync(cssPath)) {
+      const content: string = fs.readFileSync(cssPath, "utf8");
 
-    // View is Ready so we can inject the CSS
-    this.customCSSKey = await this.ytmView.webContents.insertCSS(content);
+      // Check if the YTM view is loaded
+      // This is not working...
+      const isLoaded: boolean = this.ytmView.webContents.isLoading() || this.ytmView.webContents.isWaitingForResponse();
+  
+      if (isLoaded) {
+        ipcMain.once('ytmView:loaded', () => {
+          this.ytmView.webContents.insertCSS(content).then((customCssRef) => {
+            this.customCSSKey = customCssRef
+          });
+        });
+      }
+      else {
+        this.ytmView.webContents.insertCSS(content).then((customCssRef) => {
+          this.customCSSKey = customCssRef
+        });
+      }
+
+      this.watchCSSFile(cssPath);
+    }
+    else {
+      console.error("Custom CSS file not found");
+    }
   }
 
   private async removeCSS() {
