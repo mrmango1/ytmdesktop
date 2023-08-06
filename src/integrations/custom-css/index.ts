@@ -11,10 +11,10 @@ export default class CustomCSS implements IIntegration {
   private store: ElectronStore<StoreSchema>;
   private isEnabled = false;
 
-  private ytmViewLoaded = false;
   private customCSSKey: string|null = null;
   private fileListener: fs.StatsListener|null = null;
   private storeListener: Unsubscribe|null = null;
+  private ipcListener: () => void|null = null;
 
   public provide(store: ElectronStore<StoreSchema>, ytmView: BrowserView): void {
     this.ytmView = ytmView;
@@ -54,6 +54,11 @@ export default class CustomCSS implements IIntegration {
       this.storeListener();
       this.storeListener = null;
     }
+
+    if (this.ipcListener) {
+      ipcMain.removeListener('ytmView:loaded', this.ipcListener);
+      this.ipcListener = null;
+    }
   }
 
   public updateCSS(): void {
@@ -72,22 +77,21 @@ export default class CustomCSS implements IIntegration {
     if (cssPath && fs.existsSync(cssPath)) {
       const content: string = fs.readFileSync(cssPath, "utf8");
 
-      // Check if the YTM view is loaded
-      // This is not working...
-      const isLoaded: boolean = this.ytmView.webContents.isLoading() || this.ytmView.webContents.isWaitingForResponse();
-  
-      if (isLoaded) {
-        ipcMain.once('ytmView:loaded', () => {
-          this.ytmView.webContents.insertCSS(content).then((customCssRef) => {
-            this.customCSSKey = customCssRef
-          });
-        });
-      }
-      else {
+      /* To do in the future...
+        Have an alternative means of checking if YTM has loaded
+        as I'd rather keep away from constantly having an event for if `ytmView:loaded` is emitted
+        and only needed for the initial load of the app */
+      this.ipcListener = () => {
         this.ytmView.webContents.insertCSS(content).then((customCssRef) => {
           this.customCSSKey = customCssRef
         });
       }
+      ipcMain.once('ytmView:loaded', this.ipcListener);
+
+      this.ytmView.webContents.insertCSS(content).then((customCssRef) => {
+        this.customCSSKey = customCssRef
+      });
+
 
       this.watchCSSFile(cssPath);
     }
