@@ -28,6 +28,8 @@ const startMinimized = ref<boolean>(general.startMinimized);
 const disableHardwareAcceleration = ref<boolean>(general.disableHardwareAcceleration);
 
 const alwaysShowVolumeSlider = ref<boolean>(appearance.alwaysShowVolumeSlider);
+const customCSSEnabled = ref<boolean>(appearance.customCSSEnabled);
+const customCSSPath = ref<string>(appearance.customCSSPath);
 
 const continueWhereYouLeftOff = ref<boolean>(playback.continueWhereYouLeftOff);
 const continueWhereYouLeftOffPaused = ref<boolean>(playback.continueWhereYouLeftOffPaused);
@@ -56,6 +58,8 @@ store.onDidAnyChange(async newState => {
   disableHardwareAcceleration.value = newState.general.disableHardwareAcceleration;
 
   alwaysShowVolumeSlider.value = newState.appearance.alwaysShowVolumeSlider;
+  customCSSEnabled.value = newState.appearance.customCSSEnabled;
+  customCSSPath.value = newState.appearance.customCSSPath;
 
   continueWhereYouLeftOff.value = newState.playback.continueWhereYouLeftOff;
   continueWhereYouLeftOffPaused.value = newState.playback.continueWhereYouLeftOffPaused;
@@ -83,6 +87,7 @@ async function settingsChanged() {
   store.set("general.disableHardwareAcceleration", disableHardwareAcceleration.value);
 
   store.set("appearance.alwaysShowVolumeSlider", alwaysShowVolumeSlider.value);
+  store.set("appearance.customCSSEnabled", customCSSEnabled.value);
 
   store.set("playback.continueWhereYouLeftOff", continueWhereYouLeftOff.value);
   store.set("playback.continueWhereYouLeftOffPaused", continueWhereYouLeftOffPaused.value);
@@ -105,6 +110,17 @@ async function settingsChanged() {
 async function settingChangedRequiresRestart() {
   requiresRestart.value = true;
   settingsChanged();
+}
+
+async function settingsChangeCustomCSS(event: Event) {
+  const target = event.target as HTMLInputElement;
+
+  store.set(
+    "appearance.customCSSPath",
+    target.files.length > 0
+    ? target.files[0].path
+    : null
+  );
 }
 
 function changeTab(newTab: number) {
@@ -161,6 +177,14 @@ function restartApplication() {
           <div class="setting">
             <p>Always show volume slider</p>
             <input v-model="alwaysShowVolumeSlider" class="toggle" type="checkbox" @change="settingsChanged" />
+          </div>
+          <div class="setting">
+            <p>Custom CSS</p>
+            <input v-model="customCSSEnabled" class="toggle" type="checkbox" @change="settingsChanged" />
+          </div>
+          <div class="setting indented">
+            <p>Custom CSS File Path</p>
+            <input type="file" @change="settingsChangeCustomCSS" />
           </div>
         </div>
 
