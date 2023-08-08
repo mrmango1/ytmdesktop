@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { app, autoUpdater, BrowserView, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import ElectronStore from "electron-store";
 import path from "path";
 import CompanionServer from "./integrations/companion-server";
@@ -16,6 +16,8 @@ declare const SETTINGS_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 declare const YTM_VIEW_PRELOAD_WEBPACK_ENTRY: string;
 
 let applicationQuitting = false;
+let appUpdateAvailable = false;
+let appUpdateDownloaded = false;
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require("electron-squirrel-startup")) {
@@ -57,6 +59,42 @@ if (!gotTheLock) {
     handleProtocol(commandLine[commandLine.length-1])
   });
 }
+
+// Configure the autoupdater
+const updateServer = "https://update.electronjs.org";
+const updateFeed = `${updateServer}/ytmdesktop/ytmdesktop/${process.platform}-${process.arch}/${app.getVersion()}`;
+
+autoUpdater.setFeedURL({
+  url: updateFeed
+});
+autoUpdater.on('checking-for-update', () => {
+  if (settingsWindow) {
+    settingsWindow.webContents.send("app:checkingForUpdates");
+  }
+});
+autoUpdater.on("update-available", () => {
+  appUpdateAvailable = true;
+  if (settingsWindow) {
+    settingsWindow.webContents.send("app:updateAvailable");
+  }
+});
+autoUpdater.on("update-not-available", () => {
+  if (settingsWindow) {
+    settingsWindow.webContents.send("app:updateNotAvailable");
+  }
+});
+autoUpdater.on("update-downloaded", () => {
+  appUpdateDownloaded = true;
+  if (settingsWindow) {
+    settingsWindow.webContents.send("app:updateDownloaded");
+  }
+});
+/*
+TEMPORARY UPDATE CHECK DISABLE WHILE DEVELOPMENT OCCURS (This will always have errors for now until a release occurs)
+setInterval(() => {
+  autoUpdater.checkForUpdates()
+}, 1000 * 60 * 10);
+*/
 
 // Protocol handler
 function handleProtocol(url: string) {
@@ -792,6 +830,11 @@ app.on("ready", () => {
     app.quit();
   });
 
+  ipcMain.on("settingsWindow:restartApplicationForUpdate", () => {
+    applicationQuitting = true;
+    autoUpdater.quitAndInstall();
+  })
+
   // Handle ytm view ipc
   ipcMain.on("ytmView:loaded", () => {
     if (ytmView !== null && mainWindow !== null) {
@@ -873,10 +916,41 @@ app.on("ready", () => {
     return safeStorage.encryptString(value).toString("hex");
   });
 
+  // Handle app ipc
+  ipcMain.handle("app:getVersion", () => {
+    return app.getVersion();
+  })
+
+  ipcMain.on("app:checkForUpdates", () => {
+    // autoUpdater downloads automatically and calling checkForUpdates causes duplicate install
+    if (!appUpdateAvailable || !appUpdateDownloaded) {
+      autoUpdater.checkForUpdates();
+    }
+  })
+
+  ipcMain.handle("app:isUpdateAvailable", () => {
+    return appUpdateAvailable;
+  })
+
+  ipcMain.handle("app:isUpdateDownloaded", () => {
+    return appUpdateDownloaded;
+  })
+
   // Create the permission handlers
+  session.fromPartition("persist:ytmview").setPermissionCheckHandler((webContents, permission) => {
+    if (webContents == ytmView.webContents) {
+      if (permission === "fullscreen") {
+        return true;
+      }
+    }
+
+    return false;
+  });
   session.fromPartition("persist:ytmview").setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === "fullscreen") {
-      return callback(true);
+    if (webContents == ytmView.webContents) {
+      if (permission === "fullscreen") {
+        return callback(true);
+      }
     }
 
     return callback(false);
