@@ -14,7 +14,8 @@ export default class LastFM implements IIntegration {
 
   private isEnabled = false;
   private lastDetails: VideoDetails = null;
-  private counterIds: string[]|null;
+
+  private possibleVideoIds: string[]|null;
   private lastfmDetails: StoreSchema["lastfm"] = null;
   private scrobbleTimer: NodeJS.Timer|null = null;
   private playerStateFunction: (state: PlayerState) => void;
@@ -82,13 +83,15 @@ export default class LastFM implements IIntegration {
     if (state.videoDetails && state.trackState === VideoState.Playing) {
       // Check if the video has changed (TO DO: Fix song on repeat not scrobbling)
 
-      if ((this.lastDetails && this.lastDetails.id === state.videoDetails.id)
-        || (this.counterIds && this.counterIds.indexOf(state.videoDetails.id) !== -1))
+      if (this.possibleVideoIds && this.possibleVideoIds.indexOf(state.videoDetails.id) !== -1)
       {
         return;
       }
       this.lastDetails = state.videoDetails;
-      this.counterIds = state.queue.items[state.queue.selectedItemIndex]?.counterparts.map((item) => item.videoId);
+
+      // Store all the IDs of videos for this song.
+      this.possibleVideoIds = state.queue.items[state.queue.selectedItemIndex]?.counterparts?.map((item) => item.videoId) || [];
+      this.possibleVideoIds.push(state.queue.items[state.queue.selectedItemIndex]?.videoId);
 
       if (!this.lastfmDetails || !this.lastfmDetails.sessionKey) {
         this.getSession();
