@@ -7,13 +7,14 @@ import IIntegration from "../integration";
 import { StoreSchema } from "../../shared/store/schema";
 import { LastfmErrorResponse, LastfmRequestBody, LastfmSessionResponse, LastfmTokenResponse } from "./schemas";
 
-import playerStateStore, { PlayerState, VideoDetails } from "../../player-state-store";
+import playerStateStore, { PlayerState, VideoDetails, VideoState } from "../../player-state-store";
 
 export default class LastFM implements IIntegration {
   private store: ElectronStore<StoreSchema>;
 
   private isEnabled = false;
   private lastDetails: VideoDetails = null;
+  private counterIds: string[]|null;
   private lastfmDetails: StoreSchema["lastfm"] = null;
   private scrobbleTimer: NodeJS.Timer|null = null;
   private playerStateFunction: (state: PlayerState) => void;
@@ -78,12 +79,16 @@ export default class LastFM implements IIntegration {
   private async updatePlayerState(state: PlayerState): Promise<void> {
     if (!this.isEnabled) { return; }
 
-    if (state.videoDetails && state.trackState === 1) {
+    if (state.videoDetails && state.trackState === VideoState.Playing) {
       // Check if the video has changed (TO DO: Fix song on repeat not scrobbling)
-      if (this.lastDetails && this.lastDetails.id === state.videoDetails.id) {
+
+      if ((this.lastDetails && this.lastDetails.id === state.videoDetails.id)
+        || (this.counterIds && this.counterIds.indexOf(state.videoDetails.id) !== -1))
+      {
         return;
       }
       this.lastDetails = state.videoDetails;
+      this.counterIds = state.queue.items[state.queue.selectedItemIndex]?.counterparts.map((item) => item.videoId);
 
       if (!this.lastfmDetails || !this.lastfmDetails.sessionKey) {
         this.getSession();
@@ -215,6 +220,7 @@ export default class LastFM implements IIntegration {
     for (const key in params) {
       const value = params[key as keyof LastfmRequestBody];
       if (value === null || value=== undefined) { continue; }
+
       data.append(key, value.toString());
     }
     return data;
@@ -234,7 +240,10 @@ export default class LastFM implements IIntegration {
     for (const key of keys) {
       // Ignore format and callback parameters
       if (key === 'format' || key === 'callback') { continue; }
+
       const value = params[key as keyof LastfmRequestBody];
+      if (value === undefined || value === null) { continue; }
+
       data.push(`${key}${value.toString()}`);
     }
 
