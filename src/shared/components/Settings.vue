@@ -3,14 +3,19 @@ import { ref } from "vue";
 import KeybindInput from "../../shared/components/KeybindInput.vue";
 import { StoreSchema } from "../store/schema";
 
-declare const YTMD_GIT_VERSION: string;
+declare const YTMD_GIT_COMMIT_HASH: string;
 declare const YTMD_GIT_BRANCH: string;
 
-const ytmdVersion = YTMD_GIT_VERSION;
+const ytmdVersion = await window.ytmd.getAppVersion();
+const ytmdCommitHash = YTMD_GIT_COMMIT_HASH.substring(0, 6);
 const ytmdBranch = YTMD_GIT_BRANCH;
 
 const currentTab = ref(1);
 const requiresRestart = ref(false);
+const checkingForUpdate = ref(false);
+const updateAvailable = ref(await window.ytmd.isAppUpdateAvailable());
+const updateNotAvailable = ref(false);
+const updateDownloaded = ref(await window.ytmd.isAppUpdateDownloaded());
 
 const store = window.ytmd.store;
 const safeStorage = window.ytmd.safeStorage;
@@ -35,6 +40,7 @@ const continueWhereYouLeftOff = ref<boolean>(playback.continueWhereYouLeftOff);
 const continueWhereYouLeftOffPaused = ref<boolean>(playback.continueWhereYouLeftOffPaused);
 const progressInTaskbar = ref<boolean>(playback.progressInTaskbar);
 const enableSpeakerFill = ref<boolean>(playback.enableSpeakerFill);
+const ratioVolume = ref<boolean>(playback.ratioVolume);
 
 const companionServerEnabled = ref<boolean>(integrations.companionServerEnabled);
 const companionServerAuthWindowEnabled = ref<boolean>(
@@ -65,6 +71,7 @@ store.onDidAnyChange(async newState => {
   continueWhereYouLeftOffPaused.value = newState.playback.continueWhereYouLeftOffPaused;
   progressInTaskbar.value = newState.playback.progressInTaskbar;
   enableSpeakerFill.value = newState.playback.enableSpeakerFill;
+  ratioVolume.value = newState.playback.ratioVolume;
 
   companionServerEnabled.value = newState.integrations.companionServerEnabled;
   companionServerAuthWindowEnabled.value = (await safeStorage.decryptString(newState.integrations.companionServerAuthWindowEnabled)) === "true" ? true : false;
@@ -93,6 +100,7 @@ async function settingsChanged() {
   store.set("playback.continueWhereYouLeftOffPaused", continueWhereYouLeftOffPaused.value);
   store.set("playback.progressInTaskbar", progressInTaskbar.value);
   store.set("playback.enableSpeakerFill", enableSpeakerFill.value);
+  store.set("playback.ratioVolume", ratioVolume.value);
 
   store.set("integrations.companionServerEnabled", companionServerEnabled.value);
   store.set("integrations.companionServerAuthWindowEnabled", await safeStorage.encryptString(companionServerAuthWindowEnabled.value.toString()));
@@ -130,6 +138,38 @@ function changeTab(newTab: number) {
 function restartApplication() {
   window.ytmd.restartApplication();
 }
+
+function restartApplicationForUpdate() {
+  window.ytmd.restartApplicationForUpdate();
+}
+
+function checkForUpdates() {
+  window.ytmd.checkForUpdates();
+  checkingForUpdate.value = true;
+}
+
+window.ytmd.handleCheckingForUpdate(() => {
+  checkingForUpdate.value = true;
+});
+
+window.ytmd.handleUpdateAvailable(() => {
+  checkingForUpdate.value = false;
+  updateAvailable.value = true;
+  updateNotAvailable.value = false;
+});
+
+window.ytmd.handleUpdateNotAvailable(() => {
+  checkingForUpdate.value = false;
+  updateNotAvailable.value = true;
+  updateAvailable.value = false;
+});
+
+window.ytmd.handleUpdateDownloaded(() => {
+  checkingForUpdate.value = false;
+  updateNotAvailable.value = false;
+  updateAvailable.value = false;
+  updateDownloaded.value = true;
+});
 </script>
 
 <template>
@@ -188,25 +228,28 @@ function restartApplication() {
           </div>
         </div>
 
-        <div v-if="currentTab === 3" class="playback-tab">
-          <div class="setting">
-            <p>Continue where you left off</p>
-            <input v-model="continueWhereYouLeftOff" class="toggle" type="checkbox" @change="settingsChanged" />
-          </div>
-          <div v-if="continueWhereYouLeftOff" class="setting indented">
-            <p>Pause on application launch</p>
-            <input v-model="continueWhereYouLeftOffPaused" class="toggle" type="checkbox" @change="settingsChanged" />
-          </div>
-          <div class="setting">
-            <p>Show track progress on taskbar</p>
-            <input v-model="progressInTaskbar" class="toggle" type="checkbox" @change="settingsChanged" />
-          </div>
-          <!-- enableSpeakerFill -->
-          <div class="setting">
-            <p>Enable speaker fill <span class="reload-required material-symbols-outlined">autorenew</span></p>
-            <input v-model="enableSpeakerFill" class="toggle" type="checkbox" @change="settingChangedRequiresRestart" />
-          </div>
+      <div v-if="currentTab === 3" class="playback-tab">
+        <div class="setting">
+          <p>Continue where you left off</p>
+          <input v-model="continueWhereYouLeftOff" class="toggle" type="checkbox" @change="settingsChanged" />
         </div>
+        <div v-if="continueWhereYouLeftOff" class="setting indented">
+          <p>Pause on application launch</p>
+          <input v-model="continueWhereYouLeftOffPaused" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+        <div class="setting">
+          <p>Show track progress on taskbar</p>
+          <input v-model="progressInTaskbar" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+        <div class="setting">
+          <p>Enable speaker fill <span class="reload-required material-symbols-outlined">autorenew</span></p>
+          <input v-model="enableSpeakerFill" class="toggle" type="checkbox" @change="settingChangedRequiresRestart" />
+        </div>
+        <div class="setting">
+          <p>Ratio Volume</p>
+          <input v-model="ratioVolume" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+      </div>
 
         <div v-if="currentTab === 4" class="integrations-tab">
           <div class="setting">
@@ -261,8 +304,29 @@ function restartApplication() {
           <img class="icon" src="../../assets/icons/ytmd.png" />
           <h2 class="app-name">YouTube Music Desktop App</h2>
           <p class="made-by">Made by YTMDesktop Team</p>
-          <p class="version">Version: {{ ytmdVersion }}</p>
-          <p class="branch">Branch: {{ ytmdBranch }}</p>
+          <button
+            v-if="!updateDownloaded"
+            :disabled="!(!checkingForUpdate && !updateAvailable && !updateDownloaded)"
+            class="update-check-button"
+            @click="checkForUpdates"
+          >
+            <span class="material-symbols-outlined">update</span>Check for updates
+          </button>
+          <button v-if="updateDownloaded" class="update-button" @click="restartApplicationForUpdate">
+            <span class="material-symbols-outlined">upgrade</span>Restart to update
+          </button>
+          <p v-if="checkingForUpdate && !updateAvailable && !updateDownloaded" class="updating">
+            <span class="material-symbols-outlined">progress_activity</span>Checking for updates...
+          </p>
+          <p v-if="updateAvailable && !updateDownloaded" class="updating">
+            <span class="material-symbols-outlined">progress_activity</span>Downloading update...
+          </p>
+          <p v-if="updateNotAvailable" class="no-update">Update not available</p>
+          <span class="version-info">
+            <p class="version">Version: {{ ytmdVersion }}</p>
+            <p class="branch">Branch: {{ ytmdBranch }}</p>
+            <p class="commit">Commit: {{ ytmdCommitHash }}</p>
+          </span>
           <div class="links">
             <a href="https://github.com/ytmdesktop/ytmdesktop" target="_blank">GitHub</a>
             <a href="https://ytmdesktop.app" target="_blank">Website</a>
@@ -274,15 +338,11 @@ function restartApplication() {
 </template>
 
 <style scoped>
-body,
-* {
-  user-select: none;
-}
-
 .settings-container {
   height: calc(100% - 36px);
   display: flex;
   flex-direction: column;
+  user-select: none;
 }
 
 .content-container {
@@ -428,7 +488,8 @@ body,
 }
 
 .version,
-.branch {
+.branch,
+.commit {
   margin: 4px 0;
   color: #bbbbbb;
 }
@@ -471,5 +532,58 @@ body,
   border-radius: 4px;
   padding: 8px 16px;
   cursor: pointer;
+}
+
+.update-check-button {
+  display: flex;
+  align-items: center;
+  background-color: transparent;
+  border: 1px solid #ffffff;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.updating,
+.no-update {
+  display: flex;
+  align-items: center;
+  color: #888888;
+  margin: 0 0 8px 0;
+}
+
+.updating .material-symbols-outlined {
+  animation: rotation 1s infinite linear;
+}
+
+@keyframes rotation {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(359deg);
+  }
+}
+
+.update-button {
+  display: flex;
+  align-items: center;
+  background-color: #f44336;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.update-check-button .material-symbols-outlined,
+.updating .material-symbols-outlined,
+.update-button .material-symbols-outlined {
+  margin-right: 4px;
+}
+
+.version-info {
+  user-select: text;
 }
 </style>

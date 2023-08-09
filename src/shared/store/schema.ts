@@ -16,6 +16,7 @@ export type StoreSchema = {
     continueWhereYouLeftOffPaused: boolean;
     progressInTaskbar: boolean;
     enableSpeakerFill: boolean;
+    ratioVolume: boolean;
   };
   integrations: {
     companionServerEnabled: boolean;
