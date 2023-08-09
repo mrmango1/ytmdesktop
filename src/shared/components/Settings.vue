@@ -120,14 +120,19 @@ async function settingChangedRequiresRestart() {
   settingsChanged();
 }
 
-async function settingsChangeCustomCSS(event: Event) {
+async function settingChangedFile(event: Event) {
   const target = event.target as HTMLInputElement;
 
+  const setting = target.dataset.setting;
+  if (!setting) {
+    throw new Error("No setting specified in File Input");
+  }
+
   store.set(
-    "appearance.customCSSPath",
+    setting,
     target.files.length > 0
-    ? target.files[0].path
-    : null
+      ? target.files[0].path
+      : null
   );
 }
 
@@ -224,7 +229,7 @@ window.ytmd.handleUpdateDownloaded(() => {
           </div>
           <div class="setting indented">
             <p>Custom CSS File Path</p>
-            <input type="file" @change="settingsChangeCustomCSS" />
+            <input type="file" accept=".css" data-setting="appearance.customCSSPath" @change="settingChangedFile"  />
           </div>
         </div>
 
