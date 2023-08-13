@@ -35,6 +35,7 @@ jobs:
         run: yarn make
 
       - name: Build (arm64)
+        if: matrix.os == 'macos-latest'
         run: yarn make --arch arm64
 
       - name: Upload artifacts (x64)
@@ -49,6 +50,7 @@ jobs:
             out/make/**/*.dmg
 
       - name: Upload artifacts (arm64)
+        if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v3
         with:
           name: dist-${{ matrix.os.name }}-arm64
