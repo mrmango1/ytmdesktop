@@ -4,12 +4,19 @@
   "version": "2.0.0",
   "description": "YouTube Music Desktop App",
   "main": ".webpack/main",
+  "private": true,
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
+    "publish:dry": "electron-forge publish --dry-run",
+    "publish:fromdry": "electron-forge publish --from-dry-run",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx,.vue .",
+    "lint:fix": "eslint --ext .ts,.tsx,.vue .",
+    "prettier": "prettier --check *.{ts,tsx,vue}",
+    "prettier:fix": "prettier --write *.{ts,tsx,vue}",
+    "prepare": "husky install"
   },
   "keywords": [],
   "author": {
@@ -18,38 +25,61 @@
   },
   "license": "GPL-3.0-only",
   "devDependencies": {
-    "@electron-forge/cli": "^6.0.4",
-    "@electron-forge/maker-deb": "^6.0.4",
-    "@electron-forge/maker-rpm": "^6.0.4",
-    "@electron-forge/maker-squirrel": "^6.0.4",
-    "@electron-forge/maker-zip": "^6.0.4",
-    "@electron-forge/plugin-webpack": "^6.0.4",
+    "@electron-forge/cli": "^6.2.1",
+    "@electron-forge/maker-deb": "^6.2.1",
+    "@electron-forge/maker-rpm": "^6.2.1",
+    "@electron-forge/maker-squirrel": "^6.2.1",
+    "@electron-forge/maker-zip": "^6.2.1",
+    "@electron-forge/plugin-webpack": "^6.2.1",
+    "@electron-forge/publisher-github": "^6.2.1",
     "@types/discord-rpc": "^4.0.3",
-    "@types/node": "^18.11.18",
-    "@typescript-eslint/eslint-plugin": "^5.0.0",
-    "@typescript-eslint/parser": "^5.0.0",
+    "@types/node": "^18.17.1",
+    "@typescript-eslint/eslint-plugin": "^6.2.1",
+    "@typescript-eslint/parser": "^6.2.1",
     "@vercel/webpack-asset-relocator-loader": "1.7.3",
     "css-loader": "^6.0.0",
-    "electron": "22.0.0",
+    "electron": "25.3.2",
     "eslint": "^8.0.1",
+    "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-import": "^2.25.0",
-    "fork-ts-checker-webpack-plugin": "^7.2.13",
+    "eslint-plugin-vue": "^9.15.1",
+    "fork-ts-checker-webpack-plugin": "^8.0.0",
+    "git-revision-webpack-plugin": "5.0.0",
+    "husky": "^8.0.3",
+    "lint-staged": "^13.2.3",
     "node-loader": "^2.0.0",
+    "prettier": "^3.0.0",
     "style-loader": "^3.0.0",
     "ts-loader": "^9.2.2",
     "ts-node": "^10.0.0",
-    "typescript": "~4.5.4",
+    "typescript": "~5.1.6",
     "vue-loader": "^17.0.1",
-    "vue-template-compiler": "^2.7.14"
+    "vue-template-compiler": "^2.7.14",
+    "webpack": "^5.88.2"
   },
   "dependencies": {
+    "@fastify/error": "^3.3.0",
+    "@fastify/rate-limit": "^8.0.3",
+    "@fastify/type-provider-typebox": "^3.4.0",
+    "@sinclair/typebox": "^0.30.2",
     "discord-rpc": "^4.0.1",
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^8.1.0",
-    "fastify": "^4.11.0",
+    "fastify": "^4.16.0",
     "fastify-socket.io": "^4.0.0",
-    "material-symbols": "^0.4.2",
+    "material-symbols": "^0.10.2",
     "socket.io": "^4.5.4",
     "vue": "^3.2.45"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,vue}": [
+      "prettier --write",
+      "eslint --cache --fix"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
   }
 }
