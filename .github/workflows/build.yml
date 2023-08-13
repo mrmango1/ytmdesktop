@@ -28,23 +28,30 @@ jobs:
           cache: 'yarn'
           node-version: 18
 
-      - run: yarn --frozen-lockfile
+      - name: Install dependencies
+        run: yarn --frozen-lockfile
 
-      - run: yarn make
+      - name: Build (x64)
+        run: yarn make
 
-      # - uses: actions/upload-artifact@v2
-      #   with:
-      #     name: dist-merged
-      #     path: |
-      #       out/make/squirrel.windows/x64/*.exe
-      #       out/make/deb/x64/*.deb
-      #       out/make/rpm/x64/*.rpm
-      #       out/make/**/*.zip
-      #       out/make/**/*.dmg
+      - name: Build (arm64)
+        run: yarn make --arch arm64
 
-      - uses: actions/upload-artifact@v3
+      - name: Upload artifacts (x64)
+        uses: actions/upload-artifact@v3
         with:
-          name: dist-${{ matrix.os.name }}
+          name: dist-${{ matrix.os.name }}-x64
+          path: |
+            out/make/squirrel.windows/x64/*.exe
+            out/make/deb/x64/*.deb
+            out/make/rpm/x64/*.rpm
+            out/make/**/*.zip
+            out/make/**/*.dmg
+
+      - name: Upload artifacts (arm64)
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist-${{ matrix.os.name }}-arm64
           path: |
             out/make/squirrel.windows/x64/*.exe
             out/make/deb/x64/*.deb
