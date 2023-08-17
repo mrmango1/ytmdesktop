@@ -7,7 +7,14 @@ import { createAuthToken, getIsTemporaryAuthCodeValidAndRemove, getTemporaryAuth
 import fastifyRateLimit from "@fastify/rate-limit";
 import crypto from "crypto";
 import createError from "@fastify/error";
-import { APIV1CommandRequestBody, APIV1CommandRequestBodyType, APIV1RequestCodeBody, APIV1RequestCodeBodyType, APIV1RequestTokenBody, APIV1RequestTokenBodyType } from "../../shared/schemas";
+import {
+  APIV1CommandRequestBody,
+  APIV1CommandRequestBodyType,
+  APIV1RequestCodeBody,
+  APIV1RequestCodeBodyType,
+  APIV1RequestTokenBody,
+  APIV1RequestTokenBodyType
+} from "../../shared/schemas";
 
 declare const AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY: string;
 declare const AUTHORIZE_COMPANION_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -59,6 +66,7 @@ interface CompanionServerAPIv1Options extends FastifyPluginOptions {
 //const InvalidCommandError = createError("INVALID_COMMAND", "Command '%s' is invalid", 400);
 const InvalidVolumeError = createError("INVALID_VOLUME", "Volume '%s' is invalid", 400);
 const InvalidRepeatModeError = createError("INVALID_REPEAT_MODE", "Repeat mode '%s' cannot be set", 400);
+const UnauthenticatedError = createError("UNAUTHENTICATED", "Authentication not provided or invalid", 401);
 
 //type RemoteCommand = "playPause" | "play" | "pause" | "volumeUp" | "volumeDown" | "setVolume" | "mute" | "unmute" | "next" | "previous" | "repeatMode";
 
@@ -228,7 +236,7 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       }
 
       // API Users: Make sure you /requestcode above
-      const authData = getIsTemporaryAuthCodeValidAndRemove(request.body.appId, request.body.code)
+      const authData = getIsTemporaryAuthCodeValidAndRemove(request.body.appId, request.body.code);
       if (!authData) {
         response.code(400).send({
           error: "AUTHORIZATION_INVALID"
@@ -269,6 +277,7 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       });
       authorizationWindow.loadURL(AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY);
       authorizationWindow.show();
+      authorizationWindow.flashFrame(true);
 
       authorizationWindows.push(authorizationWindow);
 
@@ -297,7 +306,7 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
         const authorized = await new Promise<boolean>(resolve => {
           promiseResolve = resolve;
           promiseInterval = setInterval(() => {
-            if (request.connection.destroyed) {
+            if (request.socket.destroyed) {
               clearInterval(promiseInterval);
               resolve(false);
             }
@@ -437,9 +446,13 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
   fastify.ready().then(() => {
     fastify.io.of("/api/v1/realtime").use((socket, next) => {
       const token = socket.handshake.auth.token;
-      const validSession = isAuthValid(options.getStore(), token);
-      if (validSession) next();
-      else next(new Error("UNAUTHORIZED"));
+      const [validSession, tokenId] = isAuthValid(options.getStore(), token);
+      if (validSession) {
+        socket.data.tokenId = tokenId;
+        next();
+      } else {
+        next(new UnauthenticatedError());
+      }
     });
     // Will look into enabling sending commands/requests over the websocket at a later point in time
     /*fastify.io.of("/api/v1/realtime").on("connection", socket => {
