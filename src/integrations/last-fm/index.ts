@@ -178,11 +178,11 @@ export default class LastFM implements IIntegration {
     this.store = store;
   }
 
-  public async enable(): Promise<void> {
+  public enable(): void {
     if (this.isEnabled) { return; }
     this.isEnabled = true;
 
-    this.lastfmDetails = await this.getSettings();
+    this.lastfmDetails = this.getSettings();
 
     if (!this.lastfmDetails || !this.lastfmDetails.sessionKey) {
       this.getSession();
@@ -256,7 +256,7 @@ export default class LastFM implements IIntegration {
     return md5(data.join(''));
   }
 
-  private async getSettings(): Promise<StoreSchema['lastfm']> {
+  private getSettings(): StoreSchema['lastfm'] {
     const decryptedValues = this.store.get('lastfm');
 
     // Grab the session key and token from the store and decrypt them
@@ -264,8 +264,9 @@ export default class LastFM implements IIntegration {
       try {
         decryptedValues.sessionKey =  safeStorage.decryptString(Buffer.from(decryptedValues.sessionKey, "hex"));
       }
-      catch {
+      catch (e) {
         decryptedValues.sessionKey = null;
+        console.log(e);
       }
     }
 
@@ -273,8 +274,9 @@ export default class LastFM implements IIntegration {
       try {
         decryptedValues.token = safeStorage.decryptString(Buffer.from(decryptedValues.token, "hex"));
       }
-      catch {
+      catch (e) {
         decryptedValues.token = null;
+        console.log(e);
       }
     }
 
