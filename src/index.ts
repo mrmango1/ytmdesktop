@@ -987,6 +987,10 @@ app.on("ready", () => {
     return store.get(key);
   });
 
+  ipcMain.handle("settings:reset", (event, key: keyof StoreSchema) => {
+    store.reset(key);
+  });
+
   // Handle safeStorage ipc
   ipcMain.handle("safeStorage:decryptString", (event, value: string) => {
     if (value) {
