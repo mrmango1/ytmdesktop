@@ -1,8 +1,8 @@
 import DiscordRPC from "discord-rpc";
-import playerStateStore, { PlayerState, Thumbnail } from "../../player-state-store";
+import playerStateStore, { PlayerState, Thumbnail, VideoState } from "../../player-state-store";
 import IIntegration from "../integration";
 
-const DISCORD_CLIENT_ID = "495666957501071390";
+const DISCORD_CLIENT_ID = "1143202598460076053";
 
 function getHighestResThumbnail(thumbnails: Thumbnail[]) {
   let currentWidth = 0;
@@ -19,36 +19,38 @@ function getHighestResThumbnail(thumbnails: Thumbnail[]) {
 }
 
 function getSmallImageKey(state: number) {
+  // Developer Note:
+  // You can add "-invert" to the end of the image key to invert (Black with White Border)
   switch (state) {
-    case 1: {
-      return "discordrpc-play";
+    case VideoState.Playing: {
+      return "play-border";
     }
 
-    case 2: {
-      return "discordrpc-pause";
+    case VideoState.Paused: {
+      return "pause-border";
     }
 
-    case 3: {
-      return "discordrpc-play";
+    case VideoState.Buffering: {
+      return "play-outline-border";
     }
 
     default: {
-      return "discordrpc-pause";
+      return "pause-border";
     }
   }
 }
 
 function getSmallImageText(state: number) {
   switch (state) {
-    case 1: {
+    case VideoState.Playing: {
       return "Playing";
     }
 
-    case 2: {
+    case VideoState.Paused: {
       return "Paused";
     }
 
-    case 3: {
+    case VideoState.Buffering: {
       return "Buffering";
     }
 
@@ -69,16 +71,37 @@ export default class DiscordPresence implements IIntegration {
   private discordClient: DiscordRPC.Client = null;
   private ready = false;
   private pauseTimeout: string | number | NodeJS.Timeout = null;
-  private previousProgress: number | null = null;
   private endTimestamp: number | null = null;
+  private stateCallback: (event: PlayerState) => void = null;
+  
+  private lastTimeSeconds: number | null = null;
+  private lastDuration: number | null = null;
 
   private playerStateChanged(state: PlayerState) {
     if (this.ready && state.videoDetails) {
-      if (!this.previousProgress) {
-        this.endTimestamp =
-          state.trackState === 1 ? Math.floor(Date.now() / 1000) + (state.videoDetails.durationSeconds - Math.round(state.videoProgress)) : undefined;
-        this.previousProgress = state.videoProgress;
+      const date = Date.now();
+      const timeSeconds = Math.floor(date / 1000);
+      const videoProgress = Math.floor(state.videoProgress);
+      const duration = state.videoDetails.durationSeconds - videoProgress;
+
+      let adjustedTimeSeconds = timeSeconds;
+
+      if (!this.lastTimeSeconds) this.lastTimeSeconds = timeSeconds;
+      if (!this.lastDuration) this.lastDuration = duration;
+      if (timeSeconds - this.lastTimeSeconds > 0) {
+        if (this.lastDuration === duration) {
+          // The time changed seconds but the duration hasn't. We use the old timestamp to prevent weird deviations
+          adjustedTimeSeconds = this.lastTimeSeconds;
+        } else {
+          this.lastDuration = duration;
+          this.lastTimeSeconds = timeSeconds;
+        }
+      } else {
+        this.lastDuration = duration;
+        this.lastTimeSeconds = timeSeconds;
       }
+
+      this.endTimestamp = state.trackState === VideoState.Playing ? adjustedTimeSeconds + (state.videoDetails.durationSeconds - videoProgress) : undefined;
 
       const thumbnail = getHighestResThumbnail(state.videoDetails.thumbnails);
       this.discordClient.setActivity({
@@ -89,16 +112,20 @@ export default class DiscordPresence implements IIntegration {
         smallImageKey: getSmallImageKey(state.trackState),
         smallImageText: getSmallImageText(state.trackState),
         instance: false,
-        endTimestamp: state.trackState === 1 ? this.endTimestamp : undefined,
+        endTimestamp: state.trackState === VideoState.Playing ? this.endTimestamp : undefined,
         buttons: [
           {
             label: "Play on YouTube Music",
             url: `https://music.youtube.com/watch?v=${state.videoDetails.id}`
+          },
+          {
+            label: "Play on YouTube Music Desktop",
+            url: `ytmd://play/${state.videoDetails.id}`
           }
         ]
       });
 
-      if (state.trackState === 2) {
+      if (state.trackState === VideoState.Buffering || state.trackState === VideoState.Paused) {
         if (this.pauseTimeout) {
           clearTimeout(this.pauseTimeout);
           this.pauseTimeout = null;
@@ -137,7 +164,10 @@ export default class DiscordPresence implements IIntegration {
         this.ready = false;
       });
       this.discordClient.connect(DISCORD_CLIENT_ID);
-      playerStateStore.addEventListener(this.playerStateChanged);
+      this.stateCallback = event => {
+        this.playerStateChanged(event);
+      };
+      playerStateStore.addEventListener(this.stateCallback);
     }
   }
 
@@ -147,6 +177,8 @@ export default class DiscordPresence implements IIntegration {
       this.discordClient.destroy();
       this.discordClient = null;
     }
-    playerStateStore.removeEventListener(this.playerStateChanged);
+    if (this.stateCallback) {
+      playerStateStore.removeEventListener(this.stateCallback);
+    }
   }
 }

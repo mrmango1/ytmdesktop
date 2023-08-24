@@ -7,7 +7,14 @@ import { createAuthToken, getIsTemporaryAuthCodeValidAndRemove, getTemporaryAuth
 import fastifyRateLimit from "@fastify/rate-limit";
 import crypto from "crypto";
 import createError from "@fastify/error";
-import { APIV1CommandRequestBody, APIV1CommandRequestBodyType, APIV1RequestCodeBody, APIV1RequestCodeBodyType, APIV1RequestTokenBody, APIV1RequestTokenBodyType } from "../../shared/schemas";
+import {
+  APIV1CommandRequestBody,
+  APIV1CommandRequestBodyType,
+  APIV1RequestCodeBody,
+  APIV1RequestCodeBodyType,
+  APIV1RequestTokenBody,
+  APIV1RequestTokenBodyType
+} from "../../shared/schemas";
 
 declare const AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY: string;
 declare const AUTHORIZE_COMPANION_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -59,6 +66,13 @@ interface CompanionServerAPIv1Options extends FastifyPluginOptions {
 //const InvalidCommandError = createError("INVALID_COMMAND", "Command '%s' is invalid", 400);
 const InvalidVolumeError = createError("INVALID_VOLUME", "Volume '%s' is invalid", 400);
 const InvalidRepeatModeError = createError("INVALID_REPEAT_MODE", "Repeat mode '%s' cannot be set", 400);
+const UnauthenticatedError = createError("UNAUTHENTICATED", "Authentication not provided or invalid", 401);
+const AuthorizationDisabled = createError("AUTHORIZATION_DISABLED", "Authorization requests are disabled", 403);
+const AuthorizationInvalid = createError("AUTHORIZATION_INVALID", "Authorization invalid", 400);
+const AuthorizationTimeOut = createError("AUTHORIZATION_TIME_OUT", "Authorization timed out", 504);
+const AuthorizationDenied = createError("AUTHORIZATION_DENIED", "Authorization request denied", 403);
+const YouTubeMusicUnavailable = createError("YOUTUBE_MUSIC_UNVAILABLE", "YouTube Music is currently unvailable", 503);
+const YouTubeMusicTimeOut = createError("YOUTUBE_MUSIC_TIME_OUT", "Response from YouTube Music took too long", 504);
 
 //type RemoteCommand = "playPause" | "play" | "pause" | "volumeUp" | "volumeDown" | "setVolume" | "mute" | "unmute" | "next" | "previous" | "repeatMode";
 
@@ -175,15 +189,26 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       }
     },
     async (request, response) => {
+      let companionServerAuthWindowEnabled = false;
+      try {
+        companionServerAuthWindowEnabled =
+          safeStorage.decryptString(Buffer.from(options.getStore().get("integrations").companionServerAuthWindowEnabled, "hex")) === "true" ? true : false;
+      } catch {
+        /* do nothing, value is false */
+      }
+
+      // API Users: The user has companion server authorization disabled, show a feedback error accordingly
+      if (!companionServerAuthWindowEnabled) {
+        throw new AuthorizationDisabled();
+      }
+
       const code = await getTemporaryAuthCode(request.body.appId, request.body.appVersion, request.body.appName);
       if (code) {
         response.send({
           code
         });
       } else {
-        response.code(504).send({
-          error: "AUTHORIZATION_TIMEOUT"
-        });
+        throw new AuthorizationTimeOut();
       }
     }
   );
@@ -221,19 +246,13 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
 
       // API Users: The user has companion server authorization disabled, show a feedback error accordingly
       if (!companionServerAuthWindowEnabled) {
-        response.code(403).send({
-          error: "AUTHORIZATION_DISABLED"
-        });
-        return;
+        throw new AuthorizationDisabled();
       }
 
       // API Users: Make sure you /requestcode above
-      const authData = getIsTemporaryAuthCodeValidAndRemove(request.body.appId, request.body.code)
+      const authData = getIsTemporaryAuthCodeValidAndRemove(request.body.appId, request.body.code);
       if (!authData) {
-        response.code(400).send({
-          error: "AUTHORIZATION_INVALID"
-        });
-        return;
+        throw new AuthorizationInvalid();
       }
 
       const requestId = crypto.randomUUID();
@@ -269,6 +288,17 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
       });
       authorizationWindow.loadURL(AUTHORIZE_COMPANION_WINDOW_WEBPACK_ENTRY);
       authorizationWindow.show();
+      authorizationWindow.flashFrame(true);
+
+      authorizationWindow.webContents.setWindowOpenHandler(() => {
+        return {
+          action: "deny"
+        };
+      });
+      
+      authorizationWindow.webContents.on("will-navigate", event => {
+        event.preventDefault();
+      });
 
       authorizationWindows.push(authorizationWindow);
 
@@ -297,7 +327,7 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
         const authorized = await new Promise<boolean>(resolve => {
           promiseResolve = resolve;
           promiseInterval = setInterval(() => {
-            if (request.connection.destroyed) {
+            if (request.socket.destroyed) {
               clearInterval(promiseInterval);
               resolve(false);
             }
@@ -326,9 +356,7 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
           });
           options.getStore().set("integrations.companionServerAuthWindowEnabled", await safeStorage.encryptString("false"));
         } else {
-          response.code(403).send({
-            error: "AUTHORIZATION_DENIED"
-          });
+          throw new AuthorizationDenied();
         }
       } finally {
         const index = authorizationWindows.indexOf(authorizationWindow);
@@ -370,17 +398,13 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
 
         setTimeout(() => {
           ipcMain.removeListener(`ytmView:getPlaylists:response:${requestId}`, playlistsResponseListener);
-          response.code(504).send({
-            error: "YTM_RESULT_TIMEOUT"
-          });
+          throw new YouTubeMusicTimeOut();
         }, 1000 * 5);
 
         ytmView.webContents.send(`ytmView:getPlaylists`, requestId);
         //response.send(transformPlayerState(playerStateStore.getState()));
       } else {
-        response.code(503).send({
-          error: "YTM_UNAVAILABLE"
-        });
+        throw new YouTubeMusicUnavailable();
       }
     }
   );
@@ -437,9 +461,13 @@ const CompanionServerAPIv1: FastifyPluginCallback<CompanionServerAPIv1Options> =
   fastify.ready().then(() => {
     fastify.io.of("/api/v1/realtime").use((socket, next) => {
       const token = socket.handshake.auth.token;
-      const validSession = isAuthValid(options.getStore(), token);
-      if (validSession) next();
-      else next(new Error("UNAUTHORIZED"));
+      const [validSession, tokenId] = isAuthValid(options.getStore(), token);
+      if (validSession) {
+        socket.data.tokenId = tokenId;
+        next();
+      } else {
+        next(new UnauthenticatedError());
+      }
     });
     // Will look into enabling sending commands/requests over the websocket at a later point in time
     /*fastify.io.of("/api/v1/realtime").on("connection", socket => {

@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import KeybindInput from "../../shared/components/KeybindInput.vue";
 import { StoreSchema } from "../store/schema";
+import { AuthToken } from "../../integrations/companion-server/shared/auth";
 
 declare const YTMD_GIT_COMMIT_HASH: string;
 declare const YTMD_GIT_BRANCH: string;
@@ -10,12 +11,15 @@ const ytmdVersion = await window.ytmd.getAppVersion();
 const ytmdCommitHash = YTMD_GIT_COMMIT_HASH.substring(0, 6);
 const ytmdBranch = YTMD_GIT_BRANCH;
 
+const isDarwin = window.ytmd.isDarwin;
+
 const currentTab = ref(1);
 const requiresRestart = ref(false);
 const checkingForUpdate = ref(false);
 const updateAvailable = ref(await window.ytmd.isAppUpdateAvailable());
 const updateNotAvailable = ref(false);
 const updateDownloaded = ref(await window.ytmd.isAppUpdateDownloaded());
+const cssPathFileInput = ref(null);
 
 const store = window.ytmd.store;
 const safeStorage = window.ytmd.safeStorage;
@@ -34,15 +38,21 @@ const startMinimized = ref<boolean>(general.startMinimized);
 const disableHardwareAcceleration = ref<boolean>(general.disableHardwareAcceleration);
 
 const alwaysShowVolumeSlider = ref<boolean>(appearance.alwaysShowVolumeSlider);
+const customCSSEnabled = ref<boolean>(appearance.customCSSEnabled);
+const customCSSPath = ref<string>(appearance.customCSSPath);
 
 const continueWhereYouLeftOff = ref<boolean>(playback.continueWhereYouLeftOff);
 const continueWhereYouLeftOffPaused = ref<boolean>(playback.continueWhereYouLeftOffPaused);
 const progressInTaskbar = ref<boolean>(playback.progressInTaskbar);
 const enableSpeakerFill = ref<boolean>(playback.enableSpeakerFill);
+const ratioVolume = ref<boolean>(playback.ratioVolume);
 
 const companionServerEnabled = ref<boolean>(integrations.companionServerEnabled);
 const companionServerAuthWindowEnabled = ref<boolean>(
   (await safeStorage.decryptString(integrations.companionServerAuthWindowEnabled)) === "true" ? true : false
+);
+const companionServerAuthTokens = ref<AuthToken[]>(
+  JSON.parse(await safeStorage.decryptString(integrations.companionServerAuthTokens))
 );
 const discordPresenceEnabled = ref<boolean>(integrations.discordPresenceEnabled);
 const lastFMEnabled = ref<boolean>(integrations.lastFMEnabled);
@@ -65,14 +75,18 @@ store.onDidAnyChange(async newState => {
   disableHardwareAcceleration.value = newState.general.disableHardwareAcceleration;
 
   alwaysShowVolumeSlider.value = newState.appearance.alwaysShowVolumeSlider;
+  customCSSEnabled.value = newState.appearance.customCSSEnabled;
+  customCSSPath.value = newState.appearance.customCSSPath;
 
   continueWhereYouLeftOff.value = newState.playback.continueWhereYouLeftOff;
   continueWhereYouLeftOffPaused.value = newState.playback.continueWhereYouLeftOffPaused;
   progressInTaskbar.value = newState.playback.progressInTaskbar;
   enableSpeakerFill.value = newState.playback.enableSpeakerFill;
+  ratioVolume.value = newState.playback.ratioVolume;
 
   companionServerEnabled.value = newState.integrations.companionServerEnabled;
   companionServerAuthWindowEnabled.value = (await safeStorage.decryptString(newState.integrations.companionServerAuthWindowEnabled)) === "true" ? true : false;
+  companionServerAuthTokens.value = JSON.parse(await safeStorage.decryptString(newState.integrations.companionServerAuthTokens));
   discordPresenceEnabled.value = newState.integrations.discordPresenceEnabled;
   lastFMEnabled.value = newState.integrations.lastFMEnabled;
 
@@ -93,11 +107,13 @@ async function settingsChanged() {
   store.set("general.disableHardwareAcceleration", disableHardwareAcceleration.value);
 
   store.set("appearance.alwaysShowVolumeSlider", alwaysShowVolumeSlider.value);
+  store.set("appearance.customCSSEnabled", customCSSEnabled.value);
 
   store.set("playback.continueWhereYouLeftOff", continueWhereYouLeftOff.value);
   store.set("playback.continueWhereYouLeftOffPaused", continueWhereYouLeftOffPaused.value);
   store.set("playback.progressInTaskbar", progressInTaskbar.value);
   store.set("playback.enableSpeakerFill", enableSpeakerFill.value);
+  store.set("playback.ratioVolume", ratioVolume.value);
 
   store.set("integrations.companionServerEnabled", companionServerEnabled.value);
   store.set("integrations.companionServerAuthWindowEnabled", await safeStorage.encryptString(companionServerAuthWindowEnabled.value.toString()));
@@ -116,6 +132,37 @@ async function settingsChanged() {
 async function settingChangedRequiresRestart() {
   requiresRestart.value = true;
   settingsChanged();
+}
+
+async function settingChangedFile(event: Event) {
+  const target = event.target as HTMLInputElement;
+
+  const setting = target.dataset.setting;
+  if (!setting) {
+    throw new Error("No setting specified in File Input");
+  }
+
+  store.set(
+    setting,
+    target.files.length > 0
+      ? target.files[0].path
+      : null
+  );
+
+  target.value = null;
+}
+
+async function deleteCompanionAuthToken(appId: string) {
+  const index = companionServerAuthTokens.value.findIndex(token => token.appId === appId);
+  if (index > -1) {
+    companionServerAuthTokens.value.splice(index, 1);
+  }
+
+  store.set("integrations.companionServerAuthTokens", await safeStorage.encryptString(JSON.stringify(companionServerAuthTokens.value)));
+}
+
+function removeCustomCSSPath() {
+  store.set("appearance.customCSSPath", null);
 }
 
 function changeTab(newTab: number) {
@@ -177,7 +224,7 @@ window.ytmd.handleUpdateDownloaded(() => {
       </ul>
       <div class="content">
         <div v-if="currentTab === 1" class="general-tab">
-          <div class="setting">
+          <div v-if="!isDarwin" class="setting">
             <p>Hide to tray on close</p>
             <input v-model="hideToTrayOnClose" class="toggle" type="checkbox" @change="settingsChanged" />
           </div>
@@ -205,27 +252,45 @@ window.ytmd.handleUpdateDownloaded(() => {
             <p>Always show volume slider</p>
             <input v-model="alwaysShowVolumeSlider" class="toggle" type="checkbox" @change="settingsChanged" />
           </div>
+          <div class="setting">
+            <p>Custom CSS</p>
+            <input v-model="customCSSEnabled" class="toggle" type="checkbox" @change="settingsChanged" />
+          </div>
+          <div v-if="customCSSEnabled" class="setting indented">
+            <p>Custom CSS File Path</p>
+            <div class="file-picker">
+              <input ref="cssPathFileInput" type="file" accept=".css" data-setting="appearance.customCSSPath" @change="settingChangedFile"  />
+              <div class="file-input-button">
+                <button class="choose" @click="cssPathFileInput.click()"><span class="material-symbols-outlined">file_open</span></button>
+                <input type="text" readonly :title="customCSSPath" class="path" placeholder="No file chosen" :value="customCSSPath" />
+                <button v-if="customCSSPath" class="remove" @click="removeCustomCSSPath"><span class="material-symbols-outlined">delete</span></button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div v-if="currentTab === 3" class="playback-tab">
-          <div class="setting">
-            <p>Continue where you left off</p>
-            <input v-model="continueWhereYouLeftOff" class="toggle" type="checkbox" @change="settingsChanged" />
-          </div>
-          <div v-if="continueWhereYouLeftOff" class="setting indented">
-            <p>Pause on application launch</p>
-            <input v-model="continueWhereYouLeftOffPaused" class="toggle" type="checkbox" @change="settingsChanged" />
-          </div>
-          <div class="setting">
-            <p>Show track progress on taskbar</p>
-            <input v-model="progressInTaskbar" class="toggle" type="checkbox" @change="settingsChanged" />
-          </div>
-          <!-- enableSpeakerFill -->
-          <div class="setting">
-            <p>Enable speaker fill <span class="reload-required material-symbols-outlined">autorenew</span></p>
-            <input v-model="enableSpeakerFill" class="toggle" type="checkbox" @change="settingChangedRequiresRestart" />
-          </div>
+      <div v-if="currentTab === 3" class="playback-tab">
+        <div class="setting">
+          <p>Continue where you left off</p>
+          <input v-model="continueWhereYouLeftOff" class="toggle" type="checkbox" @change="settingsChanged" />
         </div>
+        <div v-if="continueWhereYouLeftOff" class="setting indented">
+          <p>Pause on application launch</p>
+          <input v-model="continueWhereYouLeftOffPaused" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+        <div class="setting">
+          <p>Show track progress on taskbar</p>
+          <input v-model="progressInTaskbar" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+        <div class="setting">
+          <p>Enable speaker fill <span class="reload-required material-symbols-outlined">autorenew</span></p>
+          <input v-model="enableSpeakerFill" class="toggle" type="checkbox" @change="settingChangedRequiresRestart" />
+        </div>
+        <div class="setting">
+          <p>Ratio Volume</p>
+          <input v-model="ratioVolume" class="toggle" type="checkbox" @change="settingsChanged" />
+        </div>
+      </div>
 
         <div v-if="currentTab === 4" class="integrations-tab">
           <div class="setting">
@@ -238,6 +303,33 @@ window.ytmd.handleUpdateDownloaded(() => {
               <p class="description">Automatically disables after the first successful authorization or 5 minutes has passed</p>
             </div>
             <input v-model="companionServerAuthWindowEnabled" class="toggle" type="checkbox" @change="settingsChanged" />
+          </div>
+          <div v-if="companionServerEnabled" class="setting indented authorized-companions">
+            <div class="name-with-description">
+              <p class="name">Authorized companions</p>
+              <p class="description">This is a list of companions that currently have access to the companion server</p>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th class="id">ID</th>
+                  <th class="name">Name</th>
+                  <th class="version">Version</th>
+                  <th class="controls"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="authToken in companionServerAuthTokens" :key="authToken.appId">
+                  <td class="id">{{ authToken.appId }}</td>
+                  <td class="name">{{ authToken.appName }}</td>
+                  <td class="version">{{ authToken.appVersion }}</td>
+                  <td class="controls"><button @click="deleteCompanionAuthToken(authToken.appId)"><span class="material-symbols-outlined">delete</span></button></td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="no-companions" v-if="companionServerAuthTokens.length === 0">
+              <td>No authorized companions</td>
+            </div>
           </div>
           <div class="setting">
             <p>Discord rich presence</p>
@@ -311,9 +403,11 @@ window.ytmd.handleUpdateDownloaded(() => {
             <span class="material-symbols-outlined">progress_activity</span>Downloading update...
           </p>
           <p v-if="updateNotAvailable" class="no-update">Update not available</p>
-          <p class="version">Version: {{ ytmdVersion }}</p>
-          <p class="branch">Branch: {{ ytmdBranch }}</p>
-          <p class="commit">Commit: {{ ytmdCommitHash }}</p>
+          <span class="version-info">
+            <p class="version">Version: {{ ytmdVersion }}</p>
+            <p class="branch">Branch: {{ ytmdBranch }}</p>
+            <p class="commit">Commit: {{ ytmdCommitHash }}</p>
+          </span>
           <div class="links">
             <a href="https://github.com/ytmdesktop/ytmdesktop" target="_blank">GitHub</a>
             <a href="https://ytmdesktop.app" target="_blank">Website</a>
@@ -325,20 +419,13 @@ window.ytmd.handleUpdateDownloaded(() => {
 </template>
 
 <style scoped>
-body,
-* {
-  user-select: none;
-}
-
 .settings-container {
-  height: calc(100% - 36px);
-  display: flex;
-  flex-direction: column;
+  user-select: none;
 }
 
 .content-container {
   display: flex;
-  flex-grow: 1;
+  height: 100%;
 }
 
 .content {
@@ -478,9 +565,9 @@ body,
   margin: 0;
 }
 
-.version,
-.branch,
-.commit {
+.version-info .version,
+.version-info .branch,
+.version-info .commit {
   margin: 4px 0;
   color: #bbbbbb;
 }
@@ -572,5 +659,117 @@ body,
 .updating .material-symbols-outlined,
 .update-button .material-symbols-outlined {
   margin-right: 4px;
+}
+
+.version-info {
+  user-select: text;
+}
+
+input[type="file"] {
+  display: none;
+}
+
+.file-picker {
+  background-color: #212121;
+  border-radius: 4px;
+}
+
+.file-input-button {
+  width: 216px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.file-input-button button {
+  padding: 8px;
+  border: none;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.file-input-button button.choose {
+  background-color: #f44336;
+  border-radius: 4px 0 0 4px;
+}
+
+.file-input-button button.remove {
+  background-color: transparent;
+  border-left: 1px solid #323232;
+  border-radius: 0 4px 4px 0;
+}
+
+.file-input-button button .material-symbols-outlined {
+  margin-right: 4px;
+  font-size: 18px;
+}
+
+.file-input-button input[type="text"] {
+  margin: 0;
+  padding: 8px;
+  width: 100%;
+  border: none;
+  background-color: transparent;
+}
+
+.file-input-button input[type="text"]:focus,
+.file-input-button input[type="text"]:active {
+  outline: none;
+}
+
+.file-input-button p {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setting.indented.authorized-companions {
+  display: flex;
+  flex-direction: column;
+  align-items: initial;
+  justify-content: initial;
+}
+
+.setting.indented.authorized-companions table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.setting.indented.authorized-companions table tr .name {
+  width: 50%;
+}
+
+.setting.indented.authorized-companions table tr th,
+.setting.indented.authorized-companions table tr td {
+  padding: 4px;
+}
+
+.setting.indented.authorized-companions table th {
+  text-align: left;
+}
+
+.setting.indented.authorized-companions table thead tr th {
+  border-bottom: 1px solid #212121;
+}
+
+.setting.indented.authorized-companions table thead tr .controls {
+  width: 48px;
+}
+
+.setting.indented.authorized-companions table tbody button {
+  border-radius: 4px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  background-color: #212121;
+  cursor: pointer;
+  border: none;
+}
+
+.setting.indented.authorized-companions .no-companions {
+  color: #bbbbbb;
+  padding: 4px;
 }
 </style>

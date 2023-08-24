@@ -1,4 +1,7 @@
 export type StoreSchema = {
+  metadata: {
+    version: 1
+  }
   general: {
     hideToTrayOnClose: boolean;
     showNotificationOnSongChange: boolean;
@@ -8,12 +11,15 @@ export type StoreSchema = {
   };
   appearance: {
     alwaysShowVolumeSlider: boolean;
+    customCSSEnabled: boolean;
+    customCSSPath: string | null;
   };
   playback: {
     continueWhereYouLeftOff: boolean;
     continueWhereYouLeftOffPaused: boolean;
     progressInTaskbar: boolean;
     enableSpeakerFill: boolean;
+    ratioVolume: boolean;
   };
   integrations: {
     companionServerEnabled: boolean;
@@ -45,4 +51,7 @@ export type StoreSchema = {
     token: string | null;
     sessionKey: string | null;
   };
+  developer: {
+    enableDevTools: boolean
+  }
 };
