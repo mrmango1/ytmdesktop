@@ -1,13 +1,13 @@
-import { shell } from "electron";
+import { shell, safeStorage } from "electron";
 import ElectronStore from "electron-store";
 import fetch from "node-fetch";
 import md5 from "md5";
 
+import playerStateStore, { PlayerState, VideoDetails, VideoState } from "../../player-state-store";
+
 import IIntegration from "../integration";
 import { StoreSchema } from "../../shared/store/schema";
 import { LastfmErrorResponse, LastfmRequestBody, LastfmSessionResponse, LastfmTokenResponse } from "./schemas";
-
-import playerStateStore, { PlayerState, VideoDetails, VideoState } from "../../player-state-store";
 
 export default class LastFM implements IIntegration {
   private store: ElectronStore<StoreSchema>;
@@ -40,7 +40,7 @@ export default class LastFM implements IIntegration {
 
   private async authenticateUser() {
     this.lastfmDetails.token = await this.createToken();
-    this.store.set('lastfm', this.lastfmDetails);
+    this.saveSettings();
 
     shell.openExternal(
       `https://www.last.fm/api/auth/`+
@@ -71,7 +71,7 @@ export default class LastFM implements IIntegration {
     }
     else if (json.session) {
       this.lastfmDetails.sessionKey = json.session.key;
-      this.store.set('lastfm', this.lastfmDetails);
+      this.saveSettings();
     }
   }
 
@@ -178,11 +178,11 @@ export default class LastFM implements IIntegration {
     this.store = store;
   }
 
-  public enable(): void {
+  public async enable(): Promise<void> {
     if (this.isEnabled) { return; }
     this.isEnabled = true;
 
-    this.lastfmDetails = this.store.get('lastfm');
+    this.lastfmDetails = await this.getSettings();
 
     if (!this.lastfmDetails || !this.lastfmDetails.sessionKey) {
       this.getSession();
@@ -213,6 +213,8 @@ export default class LastFM implements IIntegration {
 
     for (const key in params) {
       const value = params[key as keyof LastfmRequestBody];
+      if (!value) { continue; }
+
       data.push(`${encodeURIComponent(key)}=${encodeURIComponent(value.toString())}`);
     }
     return data.join('&');
@@ -245,12 +247,47 @@ export default class LastFM implements IIntegration {
       if (key === 'format' || key === 'callback') { continue; }
 
       const value = params[key as keyof LastfmRequestBody];
-      if (value === undefined || value === null) { continue; }
+      if (!value) { continue; }
 
       data.push(`${key}${value.toString()}`);
     }
 
     data.push(secret);
     return md5(data.join(''));
+  }
+
+  private async getSettings(): Promise<StoreSchema['lastfm']> {
+    const decryptedValues = this.store.get('lastfm');
+
+    // Grab the session key and token from the store and decrypt them
+    if (decryptedValues.sessionKey) {
+      try {
+        decryptedValues.sessionKey =  safeStorage.decryptString(Buffer.from(decryptedValues.sessionKey, "hex"));
+      }
+      catch {
+        decryptedValues.sessionKey = null;
+      }
+    }
+
+    if (decryptedValues.token) {
+      try {
+        decryptedValues.token = safeStorage.decryptString(Buffer.from(decryptedValues.token, "hex"));
+      }
+      catch {
+        decryptedValues.token = null;
+      }
+    }
+
+    return decryptedValues;
+  }
+
+  private async saveSettings(): Promise<void> {
+    try {
+      this.store.set('lastfm.sessionKey', safeStorage.encryptString(this.lastfmDetails.sessionKey).toString('hex'));
+      this.store.set('lastfm.token', safeStorage.encryptString(this.lastfmDetails.token).toString('hex'));
+    }
+    catch {
+      // Do nothing, the values are not valid and can be ignored
+    }
   }
 }
