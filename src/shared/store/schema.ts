@@ -1,4 +1,7 @@
 export type StoreSchema = {
+  metadata: {
+    version: 1
+  }
   general: {
     hideToTrayOnClose: boolean;
     showNotificationOnSongChange: boolean;
@@ -41,4 +44,7 @@ export type StoreSchema = {
     windowBounds: Electron.Rectangle | null;
     windowMaximized: boolean;
   };
+  developer: {
+    enableDevTools: boolean
+  }
 };
